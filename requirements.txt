@@ -4,3 +4,6 @@ python-dotenv>=1.0,<2
 
 # Flair's official Python API client (same package already tested locally).
 git+https://github.com/flair-systems/flair-api-client-py.git
+
+# Local-only BroadLink RM4 Pro IR/RF controller (never used in dry-run controller)
+broadlink>=0.19,<1

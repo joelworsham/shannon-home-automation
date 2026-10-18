@@ -102,10 +102,10 @@ existing = Path('.env')
 template = Path('.env.example')
 known = dotenv_values(existing)
 lines = [line for line in template.read_text().splitlines()
-         if line.startswith('CLIMATE_') and line.split('=', 1)[0] not in known]
+         if line.startswith(('CLIMATE_', 'BROADLINK_', 'SHELLY_')) and line.split('=', 1)[0] not in known]
 if lines:
     with existing.open('a') as out:
-        out.write('\n# Climate settings (added by project setup; edit locally as needed)\n')
+        out.write('\n# Missing project settings (added by setup; edit locally as needed)\n')
         out.write('\n'.join(lines) + '\n')
     print(f'Appended {len(lines)} new climate settings to .env without changing existing values.')
 PYENV

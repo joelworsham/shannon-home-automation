@@ -122,6 +122,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     }.items():
         for col, definition in extra.items():
             _upgrade_column(conn, table, col, definition)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hardware_observations (
+            id INTEGER PRIMARY KEY,
+            recorded_at_utc TEXT NOT NULL,
+            device TEXT NOT NULL,
+            result TEXT NOT NULL,
+            status_json TEXT,
+            error_type TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_hardware_observations_time ON hardware_observations(recorded_at_utc)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_decisions_run ON control_decisions(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_readings_run ON sensor_readings(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_runs_started ON controller_runs(started_at_utc)")
@@ -268,3 +279,24 @@ def save_evaluation(
             UPDATE controller_runs SET status='success',stage='complete',finished_at_utc=?
             WHERE id=?
         """, (_utc(), run_id))
+
+
+def save_hardware_observation(*, device: str, result: str,
+                              status: dict | None = None,
+                              error: Exception | None = None) -> None:
+    """Append a manual local-device probe; no credentials or packets are stored.
+
+    For errors, only store the exception type, not URL/token-bearing messages.
+    """
+    if device not in {"broadlink", "shelly"} or result not in {"ok", "error"}:
+        raise ValueError("Invalid device observation")
+    if (result == "error") != (error is not None):
+        raise ValueError("An error result must have an exception, and vice versa")
+    with connect() as conn, conn:
+        conn.execute("""
+            INSERT INTO hardware_observations
+            (recorded_at_utc,device,result,status_json,error_type)
+            VALUES (?,?,?,?,?)
+        """, (_utc(), device, result,
+              _json(status) if status is not None else None,
+              type(error).__name__ if error is not None else None))

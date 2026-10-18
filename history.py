@@ -14,7 +14,11 @@ def main():
                         help="Print last N decisions, including unchanged states (default: 10)")
     parser.add_argument("--configs", action="store_true", help="Show all configuration activations/changes")
     parser.add_argument("--failures", action="store_true", help="Show recent controller errors")
+    parser.add_argument("--hardware", type=int, default=0, metavar="N",
+                        help="Show last N local hardware probes")
     args = parser.parse_args()
+    if args.hardware < 0 or args.hardware > 1000:
+        parser.error("--hardware must be 0–1000")
     if args.decisions < 0 or args.decisions > 1000:
         parser.error("--decisions must be 0–1000")
     if not DB.exists():
@@ -51,6 +55,17 @@ def main():
                 print(row[0])
                 print("  Changes:", json.dumps(json.loads(row[1]), indent=2))
                 print("  Effective:", json.dumps(json.loads(row[2]), indent=2))
+        if args.hardware:
+            print("\nHARDWARE OBSERVATIONS (latest first, UTC):")
+            try:
+                for row in conn.execute("""
+                    SELECT recorded_at_utc,device,result,status_json,error_type
+                    FROM hardware_observations ORDER BY id DESC LIMIT ?
+                """, (args.hardware,)):
+                    details = json.loads(row[3]) if row[3] else {}
+                    print(f"{row[0]} | {row[1]} | {row[2]} | {details} | {row[4] or ''}")
+            except sqlite3.OperationalError as exc:
+                parser.error(f"History schema not up to date. Run controller.py first. ({exc})")
         if args.failures:
             print("\nFAILED RUNS (UTC):")
             for row in conn.execute("""

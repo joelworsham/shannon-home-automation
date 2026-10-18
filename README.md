@@ -1,9 +1,11 @@
 # Bedroom climate automation
 
 Python controller for Flair bedroom readings, Open-Meteo outside weather, and the
-Vornado Transom. **Current version is dry-run only:** no BroadLink commands,
-Shelly switching, or physical fan control. The Flair Smart Vent remains
-independent. Every normal run stores a detailed audit trail in local SQLite.
+Vornado Transom. **The actual climate controller is still dry-run only.**
+This release adds real **opt-in, read-only** Shelly local RPC and a local BroadLink
+connection/IR-codebook adapter, but **neither adapter is called by the controller**.
+The Flair Smart Vent remains independent. Every normal controller run stores a
+detailed audit trail in local SQLite.
 
 ## Full-release upgrade
 
@@ -43,7 +45,7 @@ and hysteresis control speeds 2–4. All temperatures are Fahrenheit. Scheduling
 handles overnight windows and Indianapolis daylight saving time. Invalid
 settings fail safely and get logged, rather than issuing hardware commands.
 
-## Offline hardware command planning (new)
+## Offline hardware command planning
 
 Before the RM4 Pro and Shelly Plug arrive, test the *next command* that the
 controller would eventually request. This is entirely fake: there are no
@@ -84,6 +86,53 @@ network calls, live devices, or SQLite writes in the hardware simulator.
 Components: `device_plan.py` (pure reconciliation), `devices/interfaces.py`
 (mockable IR and wattage interfaces), and `simulate_hardware.py` (CLI).
 
+## Local device adapters (new, safe without hardware)
+
+Included modules:
+
+- `devices/shelly_local.py`: Shelly Plug US Gen4. **HTTP GET ONLY** of
+  `/rpc/Switch.GetStatus?id=0`. Parses actual watts (`apower`), relay status,
+  voltage and current. **No power on/off API exists** in the adapter.
+  If the plug relay is OFF, its `read_watts()` refuses to treat this as the fan
+  being off; manually restore power using the Shelly app if needed.
+- `devices/broadlink_local.py`: local BroadLink RM4 Pro targeted discovery,
+  authentication and learned IR/RF code loading. Transmission requires a
+  caller to explicitly set `permit_transmit=True`. The application does not
+  set this or invoke `send()`.
+- `hardware_probe.py`: intentional *manual* local device connectivity checks,
+  no IR/RF transmission and no Shelly relay switching. Records successful
+  probes and failed attempts to SQLite `hardware_observations` (error type only).
+- `config/remote_codes.example.json`: logical command slots, currently **all
+  empty**. Learned signal packets must be captured from the actual remotes;
+  no fake codes are supplied. Future local codebook path:
+  `data/remote_codes.json` (local and Git-ignored).
+
+**Nothing to configure until the products arrive.** On Tuesday, find the
+LAN IP of each device and set `SHELLY_HOST` / `BROADLINK_HOST` in `.env`.
+Then run these **manual** checks separately:
+
+```bash
+# No network requests or device changes, just show currently saved command names
+.venv/bin/python hardware_probe.py --codes
+
+# Connect and read watts/relay from Shelly; no relay changes
+.venv/bin/python hardware_probe.py --shelly
+
+# Authenticate to the BroadLink locally; NO IR/RF signals sent
+.venv/bin/python hardware_probe.py --broadlink
+
+# View recently stored status/probe records
+.venv/bin/python history.py --decisions 0 --hardware 15
+```
+
+The BroadLink must be configured on 2.4 GHz Wi-Fi and may require disabling
+"Lock device" in the BroadLink app to permit third-party local access. Both
+computer and devices must be reachable on the same LAN. RF compatibility
+with the ceiling-fan remote is still *untested*. The exact Vornado codes,
+physical fan behavior on power-up, direction toggling, and Shelly wattage
+thresholds still need empirical testing. **This release does not learn or send
+live codes yet.**
+
 ## Run and test locally
 
 Requires Python 3.10+, Git, and network access for actual Flair/weather calls.
@@ -115,6 +164,7 @@ field is **not validated as the latest Puck measurement time**.
 | `config_snapshots` | Every distinct complete **non-secret** effective climate/weather configuration |
 | `config_activations` | When a config first takes effect or changes (including reverts), with structured JSON before/after differences |
 | `controller_runs` | Every normal attempt, success or error, with start/finish timestamp and failure stage/type |
+| `hardware_observations` | Every explicit live Shelly/BroadLink probe: time, device, measurement metadata or error type; no credentials or packet codes |
 
 Each decision links to its configuration snapshot and controller run. The
 setting snapshots exclude credentials. Prior SQLite records remain intact;
@@ -143,10 +193,12 @@ with sqlite3.connect('data/bedroom.sqlite3') as db:
 PY
 ```
 
-**Desired** fan state is not verified physical state. A separate offline hardware command planner exists, but it is not yet called
-from the live controller. After the BroadLink and Shelly arrive, we will add
-validated local APIs, wattage calibration, safe command execution, actual
-command logging, fault detection, and experimental exhaust-assisted warming.
+**Desired** fan state is not verified physical state. The offline command planner
+and real-device adapters are separate and NOT called by `controller.py`.
+After the BroadLink and Shelly arrive, we must calibrate wattage, capture
+remote packets, validate command/replay behavior, implement deliberate safe
+command execution with logging, add diagnostics, and only then enable live
+automation. Experimental exhaust-assisted warming remains future work.
 
 ## Optional launchd on the studio Mac mini (later)
 
@@ -165,7 +217,7 @@ setup unless you explicitly request `--install-launchd`.
 ```bash
 git add -A
 git diff --cached --name-only # Confirm .env, data/, logs/, .venv/ are absent
-git commit -m 'Add offline device planning and update climate defaults'
+git commit -m 'Add safe local BroadLink and Shelly adapters'
 git push
 ```
 
@@ -179,6 +231,9 @@ git push
 - `history.py`: read-only SQLite reports
 - `device_plan.py`: safe, single-command power/speed/direction planning
 - `devices/interfaces.py`: fake BroadLink and read-only fake Shelly interfaces
+- `devices/broadlink_local.py`: local BroadLink connection, guarded send and codebook
+- `devices/shelly_local.py`: read-only Shelly status/wattage
+- `hardware_probe.py`: opt-in connectivity probes, SQLite status logging
 - `simulate_hardware.py`: offline IR/wattage scenario runner
 - `tests/`: offline unit and mocked integration tests
 - `setup.sh`: dependencies, test runner, optional launchd installer

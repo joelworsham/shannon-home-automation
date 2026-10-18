@@ -1,157 +1,181 @@
 # Bedroom climate automation
 
-Python prototype to read bedroom temperature from an original Flair Puck, fetch outdoor conditions from Open-Meteo, and decide when to cool the bedroom with a Vornado Transom. Readings are stored in a local SQLite database. The controller **currently runs in dry-run mode**: it **does not send IR commands**.
+A custom Python controller for a Vornado Transom window fan, using the existing
+**original-generation Flair Puck** for bedroom temperature, and **Open-Meteo**
+for outdoor conditions. Historical readings and control decisions are stored
+in **SQLite**.
+
+> **Current state:** fully **dry run**. It reads live Flair and weather data,
+> determines a *desired* fan operating mode/speed, and saves sensor/decision
+> history. It **does not transmit IR/RF signals, operate a Shelly plug, or
+> control the physical fan**. BroadLink and Shelly integration will come later.
+
+## Operating rules (current)
+
+- Schedule: **10:00 PM–7:30 AM** Indianapolis local time, crossing midnight.
+  Timezone: `America/Indiana/Indianapolis` (handles DST).
+- Temperature target: **60°F**; restart cooling when bedroom reaches **64°F**.
+- Only cool when outside air is at least **5°F cooler** than the bedroom.
+- Desired fan speed 1–4 favors quiet, low-speed operation. Increase thresholds:
+  about 67°F (speed 2), 70°F (speed 3), 74°F (speed 4); speed changes are
+  smoothed with 0.5°F hysteresis and one step per control cycle.
+- Desired power and speed are **not proof of actual fan state**. Future Shelly
+  wattage monitoring will make fan-running checks possible; airflow direction
+  may still require inference and testing.
+- Exhaust-assisted warming is an **unimplemented future experiment**.
+- Flair's existing Smart Vent behavior is **not altered**.
 
 ## Requirements
 
-- macOS for background collection via `launchd` (manual Python runs can work on other OSes)
-- Python 3.10+ (`python3 --version`)
-- Git (required to pull the Flair Python library and clone/push the repository)
-- Flair API Client ID and Client Secret from Flair Developer Settings
-- Internet access for Flair/Open-Meteo data
+- Python **3.10+** and Git; macOS for optional `launchd` scheduling.
+- Flair Client ID and Client Secret from Flair Developer Settings.
+- Internet access for Flair and Open-Meteo; background service requires the Mac
+  to **remain awake** (its display can sleep).
 
-These setup files are designed to sit alongside your **existing working** `controller.py`, `check_cooling.py`, `database.py`, `test_flair.py`, and `test_weather.py`. They **do not replace those Python files**.
+## Authoritative releases and installing updates
 
-## Quick setup on a Mac
+Release ZIPs are **full snapshots of the source tree**. Extract them into the
+repository root with **overwrite** enabled. Keep these local paths intact:
 
-From the project directory:
+- `.env` (credentials), `.venv/` (per-computer Python environment)
+- `data/` (SQLite history), `logs/` (runtime logs)
+- `.git/` (repository and version history)
+
+The ZIP contains no `.env`, local databases, or logs. `setup.sh` also removes
+specific obsolete preview files (`controller_next.py`, `README-NEXT.md`, and
+root-level `test_climate_policy.py`/`test_control_store.py`). It never removes
+personal runtime data.
+
+From the root of your existing clone:
+
+```bash
+cd ~/flair-automation
+unzip -oq ~/Downloads/bedroom-climate-current.zip -d .
+chmod +x setup.sh
+./setup.sh --test
+```
+
+`unzip -o` **overwrites project source files**. Any local modifications to
+those files will be lost; Git can restore previous commits when necessary.
+
+## First-time local setup
 
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-The script installs Python dependencies in `.venv/`, creates `data/` and `logs/`, and (if necessary) copies `.env.example` to `.env`. It never overwrites an existing `.env`.
-
-Edit `.env` locally, using your own Flair credentials:
+If needed, the setup script creates `.env` from `.env.example`. Put your actual
+credentials into `.env` **locally**, never in chat or Git:
 
 ```dotenv
-FLAIR_CLIENT_ID=your-real-client-id
-FLAIR_CLIENT_SECRET=your-real-client-secret
+FLAIR_CLIENT_ID=your-client-id
+FLAIR_CLIENT_SECRET=your-client-secret
 WEATHER_LOCATION=Indianapolis
 ```
 
-**Never add `.env` to Git or share its contents.** Run a dry-run test:
-
-```bash
-./setup.sh --run-once
-```
-
-Or activate the environment for interactive Python commands:
+The setup script creates/updates `.venv`, installs dependencies, and creates
+local `data/` and `logs/` directories. A subprocess cannot activate your
+parent Terminal session. To activate manually:
 
 ```bash
 source .venv/bin/activate
-python controller.py
 ```
 
-A setup subprocess cannot activate its parent Terminal shell, so interactive activation is a separate `source` command. The background service uses `.venv/bin/python` directly and needs no activation.
-
-## Push your existing project to the private repository
-
-Before proceeding, merge these files into the root of your current `flair-automation/` folder. **If you already have a `.gitignore` or README, merge their content rather than losing existing customizations.**
+## Development/testing
 
 ```bash
-cd /path/to/flair-automation
-
-# Only if this project is not already a local Git repository:
-git init
-
-git branch -M main
-
-# Only if origin does not yet exist; replace with your private repo URL:
-git remote add origin git@github.com:YOUR_ACCOUNT/YOUR_PRIVATE_REPO.git
-
-# Inspect exclusions and staged changes before committing:
-git status --short --ignored
-git check-ignore -v .env data/bedroom.sqlite3 .venv/bin/python
-
-git add .
-git diff --cached --name-only
+./setup.sh --test                # Offline unit tests
+./setup.sh --run-once            # Live APIs, record SQLite readings/decisions
+python controller.py --at 23:00 --previous off
+python controller.py --at 12:00 --previous intake2
+python test_flair.py             # Live API smoke test
+python test_weather.py           # Live weather smoke test
 ```
 
-Stop if the staged list contains `.env`, files under `data/`, `logs/`, or `.venv/`. If `.env` was previously tracked, remove it from the Git index without deleting the file:
+The `--at` simulation uses live sensor data but simulates local time; it never
+writes to SQLite. `--previous` can only be used with `--at`. Without `--at`,
+the controller records observations and decisions to `data/bedroom.sqlite3`.
+
+## SQLite history
+
+- `sensor_readings`: actual received readings at the time the script runs;
+  UTC-recorded time plus source-provided timestamps when available.
+- `control_decisions`: chosen mode/speed, prior **desired** mode/speed, reason,
+  schedule status, and `command_sent=0` for dry runs.
+
+The original Flair room `state-updated-at` field has **not** been proven to be
+the time of the last Puck measurement. Do not assume this field proves data
+freshness. A failed API request stops that run rather than sending commands.
+
+To inspect recent history:
 
 ```bash
-git rm --cached .env
+python - <<'PY'
+import sqlite3
+with sqlite3.connect('data/bedroom.sqlite3') as db:
+    for row in db.execute('''
+        SELECT recorded_at, bedroom_temp_f, outdoor_temp_f
+        FROM sensor_readings ORDER BY id DESC LIMIT 5
+    '''):
+        print(row)
+PY
 ```
 
-If credentials were ever pushed to a remote, **rotate your Flair secret**; removing it in a later commit does not erase older commits.
-
-After verifying the staged files:
+## Optional macOS background collector (later, on studio Mac mini)
 
 ```bash
-git commit -m "Add bedroom automation and Mac setup"
-git push -u origin main
-```
-
-If `origin` already exists, inspect it with `git remote -v` instead of running `git remote add origin`. If the private remote was initialized with its own README, the first push may be rejected because remote history already exists. **Do not force-push**; reconcile/pull remote history first.
-
-GitHub SSH URLs require an authorized SSH key. HTTPS remote URLs are also fine; use your provider's recommended credential manager/token mechanism (not an account password).
-
-## Clone onto the Mac mini
-
-```bash
-git clone git@github.com:YOUR_ACCOUNT/YOUR_PRIVATE_REPO.git ~/flair-automation
-cd ~/flair-automation
-./setup.sh
-```
-
-Fill in a **separate local `.env` on the mini**. Do not copy `.env` into Git. Test manually:
-
-```bash
-./setup.sh --run-once
-```
-
-Then install the every-5-minute launchd collector (once you want continuous logging):
-
-```bash
-./setup.sh --install-launchd
+./setup.sh --install-launchd   # Collects every 5 minutes while Mac is awake
 ./setup.sh --status
-```
-
-The background collector runs `controller.py` with no `--at` argument, so it records real sensor readings to `data/bedroom.sqlite3` every five minutes, even outside the fan's 22:00–07:30 operating hours. It currently only prints fan decisions; **it does not control hardware**.
-
-Inspect the output and any errors:
-
-```bash
-tail -f logs/collector.stdout.log
-tail -f logs/collector.stderr.log
-```
-
-To stop and remove the service without deleting data or credentials:
-
-```bash
 ./setup.sh --uninstall-launchd
 ```
 
-### Important Mac mini settings
+`launchd` calls `controller.py` using the `.venv` Python interpreter; no
+Terminal window or shell activation is required. This is a **user LaunchAgent**,
+so it requires a signed-in user session. It is **not installed automatically**
+by `./setup.sh`.
 
-- **System Settings → Energy → Prevent automatic sleeping when the display is off**: enable it; the display may sleep, but the computer must stay awake for 5-minute runs.
-- This installs a **user LaunchAgent**, not a boot-time system daemon. Its user must remain logged in; after a restart it resumes when that account logs in.
-- To run without anyone logged in, a system LaunchDaemon is possible later, but needs additional permission and security configuration.
-- Run the collector on one Mac (preferably the mini). Code syncs via Git, but the SQLite history remains **local** to whichever Mac records it.
+## Git workflow
 
-## Existing controller settings
+After extracting a release and running tests:
 
-At this stage, the project uses:
+```bash
+git status --short
+git add -A
+git diff --cached --name-only  # Should NOT show .env, data/, logs/, .venv/
+git commit -m "Update bedroom climate controller"
+git push
+```
 
-| Setting | Value |
-|---|---|
-| Cooling schedule | 22:00–07:30 in `America/Indiana/Indianapolis` |
-| Target | 60°F |
-| Restart threshold | 64°F |
-| Minimum outdoor cooling advantage | 5°F |
-| Collection interval | 300 seconds |
-| Storage | Local SQLite at `data/bedroom.sqlite3` |
+If secrets were ever previously committed, rotate them; adding `.gitignore`
+alone does not remove already tracked files from Git history.
 
-Future phases: BroadLink RM4 Pro IR/RF control, variable Transom speed (low preferred), optional power-monitoring smart plug, temperature-trend diagnostics, and experimental exhaust warm-air recovery using hallway temperature. **Those features are planned, not implemented.**
+## Source organization
 
-## Troubleshooting
+```text
+controller.py          # Canonical dry-run app entry point
+climate_policy.py      # Pure fan schedule/cooling/speed logic
+check_cooling.py       # Flair room + Open-Meteo readings
+control_store.py       # SQLite desired-state/decision history
+database.py            # SQLite sensor history
+test_flair.py          # Manual live Flair smoke test
+test_weather.py        # Manual live weather smoke test
+tests/                 # Offline regression tests
+setup.sh               # Portable setup + optional launchd integration
+.env.example           # Local credential template (no secrets)
+requirements.txt       # Python dependencies
+```
 
-- **`python3` too old:** install Python 3.10+ (e.g., via Homebrew) and rerun setup with `PYTHON_BIN=/path/to/new/python3 ./setup.sh`.
-- **`pip install` fails cloning Flair:** check Git is installed, network works, and your remote can reach `github.com`.
-- **`--install-launchd` rejects credentials:** ensure `.env` has real, nonempty Flair credentials and `WEATHER_LOCATION`.
-- **No periodic logs:** make sure the Mac isn't sleeping and the user stays logged in. Use `./setup.sh --status` and inspect `logs/collector.stderr.log`.
-- **Unexpected readings:** confirm `WEATHER_LOCATION=Indianapolis` and compare the Flair bedroom reading to the Puck/App. Sensor freshness checks are still to be implemented.
-- **Never commit the database:** keep `data/` ignored. To back up data, copy or use SQLite's `.backup` command while the database is open for use.
+## Planned integrations
 
+1. BroadLink RM4 Pro: local Python IR control of Vornado, and RF control of
+   ceiling fan **only if its unknown RF protocol proves compatible**.
+2. Shelly Plug US Gen4: keep energized; use **power monitoring only**, never
+   outlet switching to control Vornado power.
+3. Diagnostics: detect unexpected cooling/warming outcomes and flag suspected
+   missed IR commands, reversed direction, excess infiltration, etc.
+4. Experimental exhaust-assisted warming with hallway/Nest temperature; test
+   effectiveness and combustion-appliance backdraft risk before enabling.
+
+The controller currently runs only dry-run decisions, and none of the above
+planned device integrations should be treated as deployed or verified.

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Portable setup for the existing flair-automation project.
+# Setup and migration for the canonical bedroom climate automation codebase.
 # Usage:
 #   ./setup.sh                    Set up the Python environment
 #   ./setup.sh --run-once         Run the dry-run controller once
+#   ./setup.sh --test             Run offline regression tests
 #   ./setup.sh --install-launchd  Install/start 5-minute macOS background collector
 #   ./setup.sh --status           Inspect the background collector
 #   ./setup.sh --uninstall-launchd Stop/remove the background collector
@@ -21,10 +22,13 @@ Usage: ./setup.sh [option]
 
 No option           Install/update local Python venv and dependencies
 --run-once          Set up if needed and run controller.py once (dry-run)
+--test              Run offline regression tests
 --install-launchd   Set up and install an every-5-minutes LaunchAgent (macOS)
 --status            Show LaunchAgent status (macOS)
 --uninstall-launchd Stop/remove LaunchAgent (keeps .env and database)
 --help              Show this help
+
+Code releases overwrite application files but preserve .env, .venv, data/, logs/.
 
 The shell cannot be activated by a child script. To activate interactively:
   source .venv/bin/activate
@@ -55,7 +59,20 @@ print('Local credentials/configuration found (values not printed).')
 PY
 }
 
+remove_obsolete_files() {
+    # Known filenames from the pre-canonical preview. Remove only these code
+    # artifacts; never delete .env, .venv, SQLite files, or log files.
+    local old_file
+    for old_file in controller_next.py README-NEXT.md test_climate_policy.py test_control_store.py; do
+        if [[ -f "$PROJECT_DIR/$old_file" ]]; then
+            rm -- "$PROJECT_DIR/$old_file"
+            echo "Removed superseded $old_file"
+        fi
+    done
+}
+
 install_deps() {
+    remove_obsolete_files
     if ! command -v "${PYTHON_BIN:-python3}" >/dev/null 2>&1; then
         echo "Python 3 not found. Install Python 3.10+ and retry." >&2
         exit 1
@@ -129,7 +146,7 @@ status_launchd() {
     require_macos
     local service="gui/$(id -u)/$LAUNCHD_LABEL"
     if launchctl print "$service"; then
-        echo "\nLog files: $PROJECT_DIR/logs/collector.{stdout,stderr}.log"
+        printf '\nLog files: %s\n' "$PROJECT_DIR/logs/"
     else
         echo "LaunchAgent not loaded: $service" >&2
         exit 1
@@ -154,6 +171,10 @@ case "${1:-}" in
         install_deps
         check_env
         "$VENV_PYTHON" "$PROJECT_DIR/controller.py"
+        ;;
+    --test)
+        install_deps
+        "$VENV_PYTHON" -m unittest discover -s tests -v
         ;;
     --install-launchd) install_launchd ;;
     --status) status_launchd ;;

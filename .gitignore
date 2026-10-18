@@ -23,3 +23,5 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+*.sqlite3-journal
+*.sqlite3.bak

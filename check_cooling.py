@@ -7,12 +7,12 @@ import os
 
 import requests
 from dotenv import load_dotenv
-from flair_client import make_client
 
 load_dotenv()
 
 
 def get_bedroom():
+    from flair_client import make_client
     client = make_client(
         client_id=os.environ["FLAIR_CLIENT_ID"],
         client_secret=os.environ["FLAIR_CLIENT_SECRET"],
@@ -73,13 +73,17 @@ def get_outdoor():
 
 if __name__ == "__main__":
     from datetime import datetime
-    from climate_policy import TIMEZONE, evaluate
+    from zoneinfo import ZoneInfo
+    from climate_policy import evaluate
+    from settings import load_settings
 
+    config = load_settings()
     bedroom, outdoor = get_bedroom(), get_outdoor()
     decision = evaluate(
-        when=datetime.now(TIMEZONE),
+        when=datetime.now(ZoneInfo(config.policy.timezone)),
         bedroom_f=bedroom["temp"],
         outdoor_f=outdoor["temp"],
+        config=config.policy,
     )
     print(f"Bedroom: {bedroom['temp']:.1f}°F; humidity: {bedroom['humidity']}%")
     print(f"Outside ({outdoor['location']}): {outdoor['temp']:.1f}°F")

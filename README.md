@@ -1,52 +1,13 @@
 # Bedroom climate automation
 
-A custom Python controller for a Vornado Transom window fan, using the existing
-**original-generation Flair Puck** for bedroom temperature, and **Open-Meteo**
-for outdoor conditions. Historical readings and control decisions are stored
-in **SQLite**.
+Python controller for Flair bedroom readings, Open-Meteo outside weather, and the
+Vornado Transom. **Current version is dry-run only:** no BroadLink commands,
+Shelly switching, or physical fan control. The Flair Smart Vent remains
+independent. Every normal run stores a detailed audit trail in local SQLite.
 
-> **Current state:** fully **dry run**. It reads live Flair and weather data,
-> determines a *desired* fan operating mode/speed, and saves sensor/decision
-> history. It **does not transmit IR/RF signals, operate a Shelly plug, or
-> control the physical fan**. BroadLink and Shelly integration will come later.
+## Full-release upgrade
 
-## Operating rules (current)
-
-- Schedule: **10:00 PM–7:30 AM** Indianapolis local time, crossing midnight.
-  Timezone: `America/Indiana/Indianapolis` (handles DST).
-- Temperature target: **60°F**; restart cooling when bedroom reaches **64°F**.
-- Only cool when outside air is at least **5°F cooler** than the bedroom.
-- Desired fan speed 1–4 favors quiet, low-speed operation. Increase thresholds:
-  about 67°F (speed 2), 70°F (speed 3), 74°F (speed 4); speed changes are
-  smoothed with 0.5°F hysteresis and one step per control cycle.
-- Desired power and speed are **not proof of actual fan state**. Future Shelly
-  wattage monitoring will make fan-running checks possible; airflow direction
-  may still require inference and testing.
-- Exhaust-assisted warming is an **unimplemented future experiment**.
-- Flair's existing Smart Vent behavior is **not altered**.
-
-## Requirements
-
-- Python **3.10+** and Git; macOS for optional `launchd` scheduling.
-- Flair Client ID and Client Secret from Flair Developer Settings.
-- Internet access for Flair and Open-Meteo; background service requires the Mac
-  to **remain awake** (its display can sleep).
-
-## Authoritative releases and installing updates
-
-Release ZIPs are **full snapshots of the source tree**. Extract them into the
-repository root with **overwrite** enabled. Keep these local paths intact:
-
-- `.env` (credentials), `.venv/` (per-computer Python environment)
-- `data/` (SQLite history), `logs/` (runtime logs)
-- `.git/` (repository and version history)
-
-The ZIP contains no `.env`, local databases, or logs. `setup.sh` also removes
-specific obsolete preview files (`controller_next.py`, `README-NEXT.md`, and
-root-level `test_climate_policy.py`/`test_control_store.py`). It never removes
-personal runtime data.
-
-From the root of your existing clone:
+Each ZIP is the **entire authoritative project**. Overwrite the source files:
 
 ```bash
 cd ~/flair-automation
@@ -55,127 +16,169 @@ chmod +x setup.sh
 ./setup.sh --test
 ```
 
-`unzip -o` **overwrites project source files**. Any local modifications to
-those files will be lost; Git can restore previous commits when necessary.
+`setup.sh` deletes explicitly known obsolete preview files (`control_store.py`,
+`controller_next.py`, `README-NEXT.md`, old standalone tests), but never deletes
+`.env`, `.venv/`, `data/`, `logs/`, or `.git/`. Neither secrets nor runtime data
+are included in the ZIP. Existing SQLite tables/rows are migrated in place.
 
-## First-time local setup
+## `.env` climate controls
+
+On update, `setup.sh` will append any missing `CLIMATE_*` defaults to your
+existing `.env` without changing your credential values or other settings.
+Editing those non-secret values on your Mac is all you need to change policy.
+Every scheduled invocation reloads `.env` settings. **OS environment values
+have precedence** over `.env`.
+
+The fully commented, authoritative template is in [`.env.example`](.env.example).
+It follows the project's convention: each explanation appears **above** its
+variable. Current defaults are target **58°F**, restart **62°F**, speeds 2–4
+at **64/68/72°F**, 5°F outdoor advantage, and 22:00–07:30 Indianapolis time.
+
+
+The target is when the fan should stop cooling. Cooling restarts when the
+bedroom reaches the restart threshold (if outside air is sufficiently cooler).
+Between those thresholds, the previous *desired* state determines whether
+cooling continues. Speed 1 is favored for quiet; configurable speed thresholds
+and hysteresis control speeds 2–4. All temperatures are Fahrenheit. Scheduling
+handles overnight windows and Indianapolis daylight saving time. Invalid
+settings fail safely and get logged, rather than issuing hardware commands.
+
+## Offline hardware command planning (new)
+
+Before the RM4 Pro and Shelly Plug arrive, test the *next command* that the
+controller would eventually request. This is entirely fake: there are no
+network calls, live devices, or SQLite writes in the hardware simulator.
 
 ```bash
-chmod +x setup.sh
-./setup.sh
+# Example: fan consumes simulated standby wattage, so plan power-on toggle
+.venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 1
+
+# Example: running on speed 1, desired speed 2; plan ONE speed-up command
+.venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 11 --direction intake --speed 1
+
+# Example: no power measurement; refuse unsafe toggle
+.venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40
+
+# Example: schedule ended; running fan should be turned off
+.venv/bin/python simulate_hardware.py --at 12:00 --bedroom 66 --outside 40 --watts 11
 ```
 
-If needed, the setup script creates `.env` from `.env.example`. Put your actual
-credentials into `.env` **locally**, never in chat or Git:
+**Important safety semantics:**
 
-```dotenv
-FLAIR_CLIENT_ID=your-client-id
-FLAIR_CLIENT_SECRET=your-client-secret
-WEATHER_LOCATION=Indianapolis
-```
+- The default simulated thresholds (≤2W standby, ≥8W running) are **made-up
+  examples for testing**, NOT real readings or validated Shelly calibration.
+- Shelly is a **read-only power monitor** in this project; no code to switch
+  the Vornado's power outlet is included.
+- The Vornado's Power and Direction buttons are **toggles**; IR success is
+  not confirmed just because a signal was sent. Do not retry blindly.
+- Power metering cannot prove direction or speed. Unknown direction/speed
+  blocks incremental commands until a separate calibration procedure exists.
+- The planner proposes **one command per observation**. A future runtime
+  must capture the new state (or establish a safe recovery method) before
+  deciding what to transmit next.
+- The simulator's cooling policy honors your `.env` values; the displayed
+  `fake_commands` list is **not transmitted** anywhere.
+- Ceiling-fan RF compatibility with BroadLink remains unconfirmed; the
+  ceiling-fan commands are intentionally not integrated into this plan yet.
 
-The setup script creates/updates `.venv`, installs dependencies, and creates
-local `data/` and `logs/` directories. A subprocess cannot activate your
-parent Terminal session. To activate manually:
+Components: `device_plan.py` (pure reconciliation), `devices/interfaces.py`
+(mockable IR and wattage interfaces), and `simulate_hardware.py` (CLI).
+
+## Run and test locally
+
+Requires Python 3.10+, Git, and network access for actual Flair/weather calls.
 
 ```bash
-source .venv/bin/activate
+./setup.sh                 # Install Python virtual environment and dependencies
+./setup.sh --test          # Run offline regression tests
+./setup.sh --run-once      # Query real APIs and append SQLite history, no IR
+source .venv/bin/activate  # Optional, for running Python interactively
+python controller.py --at 23:00 --previous off  # Simulated time; no DB writes
+python history.py --decisions 20
+python history.py --decisions 0 --configs
+python history.py --decisions 0 --failures
 ```
 
-## Development/testing
+You do not need to activate the virtual environment when using `./setup.sh`;
+it explicitly uses the `.venv` interpreter.
+
+## SQLite historical tracking
+
+Database: `data/bedroom.sqlite3`. Recorded times are UTC; original sensor
+source timestamps are retained as supplied. The old Flair `state-updated-at`
+field is **not validated as the latest Puck measurement time**.
+
+| Table | What gets recorded |
+| --- | --- |
+| `sensor_readings` | Indoor/outdoor temperatures, humidity, dew point and source timestamps for each successful evaluation |
+| `control_decisions` | **Every successful evaluation**, even when state doesn't change; previous/desired state, reason, reason code, schedule status, target/restart/minimum advantage, full JSON inputs and effective settings; `command_sent=0` |
+| `config_snapshots` | Every distinct complete **non-secret** effective climate/weather configuration |
+| `config_activations` | When a config first takes effect or changes (including reverts), with structured JSON before/after differences |
+| `controller_runs` | Every normal attempt, success or error, with start/finish timestamp and failure stage/type |
+
+Each decision links to its configuration snapshot and controller run. The
+setting snapshots exclude credentials. Prior SQLite records remain intact;
+new columns on historical rows may be `NULL` because those values were not
+originally captured. Runs with API errors log the failure but do not create a
+fabricated decision.
+
+You can inspect the most recent decisions:
 
 ```bash
-./setup.sh --test                # Offline unit tests
-./setup.sh --run-once            # Live APIs, record SQLite readings/decisions
-python controller.py --at 23:00 --previous off
-python controller.py --at 12:00 --previous intake2
-python test_flair.py             # Live API smoke test
-python test_weather.py           # Live weather smoke test
+python history.py --decisions 10 --configs --failures
 ```
 
-The `--at` simulation uses live sensor data but simulates local time; it never
-writes to SQLite. `--previous` can only be used with `--at`. Without `--at`,
-the controller records observations and decisions to `data/bedroom.sqlite3`.
-
-## SQLite history
-
-- `sensor_readings`: actual received readings at the time the script runs;
-  UTC-recorded time plus source-provided timestamps when available.
-- `control_decisions`: chosen mode/speed, prior **desired** mode/speed, reason,
-  schedule status, and `command_sent=0` for dry runs.
-
-The original Flair room `state-updated-at` field has **not** been proven to be
-the time of the last Puck measurement. Do not assume this field proves data
-freshness. A failed API request stops that run rather than sending commands.
-
-To inspect recent history:
+Or query the values active when a specific decision was made:
 
 ```bash
 python - <<'PY'
 import sqlite3
 with sqlite3.connect('data/bedroom.sqlite3') as db:
     for row in db.execute('''
-        SELECT recorded_at, bedroom_temp_f, outdoor_temp_f
-        FROM sensor_readings ORDER BY id DESC LIMIT 5
+        SELECT recorded_at_utc, bedroom_temp_f, outdoor_temp_f,
+               target_f, restart_f, desired_mode, desired_speed, reason
+        FROM control_decisions ORDER BY id DESC LIMIT 10
     '''):
         print(row)
 PY
 ```
 
-## Optional macOS background collector (later, on studio Mac mini)
+**Desired** fan state is not verified physical state. A separate offline hardware command planner exists, but it is not yet called
+from the live controller. After the BroadLink and Shelly arrive, we will add
+validated local APIs, wattage calibration, safe command execution, actual
+command logging, fault detection, and experimental exhaust-assisted warming.
+
+## Optional launchd on the studio Mac mini (later)
 
 ```bash
-./setup.sh --install-launchd   # Collects every 5 minutes while Mac is awake
+./setup.sh --install-launchd   # Every five minutes, all day
 ./setup.sh --status
 ./setup.sh --uninstall-launchd
 ```
 
-`launchd` calls `controller.py` using the `.venv` Python interpreter; no
-Terminal window or shell activation is required. This is a **user LaunchAgent**,
-so it requires a signed-in user session. It is **not installed automatically**
-by `./setup.sh`.
+The Mac must remain **awake**, although the screen may sleep. This user
+LaunchAgent runs while a user session is signed in. It is never enabled by
+setup unless you explicitly request `--install-launchd`.
 
 ## Git workflow
 
-After extracting a release and running tests:
-
 ```bash
-git status --short
 git add -A
-git diff --cached --name-only  # Should NOT show .env, data/, logs/, .venv/
-git commit -m "Update bedroom climate controller"
+git diff --cached --name-only # Confirm .env, data/, logs/, .venv/ are absent
+git commit -m 'Add offline device planning and update climate defaults'
 git push
 ```
 
-If secrets were ever previously committed, rotate them; adding `.gitignore`
-alone does not remove already tracked files from Git history.
+## Canonical application modules
 
-## Source organization
-
-```text
-controller.py          # Canonical dry-run app entry point
-climate_policy.py      # Pure fan schedule/cooling/speed logic
-check_cooling.py       # Flair room + Open-Meteo readings
-control_store.py       # SQLite desired-state/decision history
-database.py            # SQLite sensor history
-test_flair.py          # Manual live Flair smoke test
-test_weather.py        # Manual live weather smoke test
-tests/                 # Offline regression tests
-setup.sh               # Portable setup + optional launchd integration
-.env.example           # Local credential template (no secrets)
-requirements.txt       # Python dependencies
-```
-
-## Planned integrations
-
-1. BroadLink RM4 Pro: local Python IR control of Vornado, and RF control of
-   ceiling fan **only if its unknown RF protocol proves compatible**.
-2. Shelly Plug US Gen4: keep energized; use **power monitoring only**, never
-   outlet switching to control Vornado power.
-3. Diagnostics: detect unexpected cooling/warming outcomes and flag suspected
-   missed IR commands, reversed direction, excess infiltration, etc.
-4. Experimental exhaust-assisted warming with hallway/Nest temperature; test
-   effectiveness and combustion-appliance backdraft risk before enabling.
-
-The controller currently runs only dry-run decisions, and none of the above
-planned device integrations should be treated as deployed or verified.
+- `controller.py`: single entry point, dry run
+- `settings.py`: validates `.env` climate settings
+- `climate_policy.py`: pure schedule/temperature/speed policy
+- `check_cooling.py`: Flair + Open-Meteo data acquisition
+- `database.py`: schema migration and comprehensive event/decision history
+- `history.py`: read-only SQLite reports
+- `device_plan.py`: safe, single-command power/speed/direction planning
+- `devices/interfaces.py`: fake BroadLink and read-only fake Shelly interfaces
+- `simulate_hardware.py`: offline IR/wattage scenario runner
+- `tests/`: offline unit and mocked integration tests
+- `setup.sh`: dependencies, test runner, optional launchd installer

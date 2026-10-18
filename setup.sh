@@ -63,7 +63,7 @@ remove_obsolete_files() {
     # Known filenames from the pre-canonical preview. Remove only these code
     # artifacts; never delete .env, .venv, SQLite files, or log files.
     local old_file
-    for old_file in controller_next.py README-NEXT.md test_climate_policy.py test_control_store.py; do
+    for old_file in controller_next.py README-NEXT.md test_climate_policy.py test_control_store.py control_store.py tests/test_control_store.py; do
         if [[ -f "$PROJECT_DIR/$old_file" ]]; then
             rm -- "$PROJECT_DIR/$old_file"
             echo "Removed superseded $old_file"
@@ -93,6 +93,22 @@ PY
         cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
         echo "Created .env template; enter your Flair credentials locally."
     fi
+    # Append only NEW non-secret defaults; never change user-entered values or credentials.
+    "$VENV_PYTHON" - <<'PYENV'
+from pathlib import Path
+from dotenv import dotenv_values
+
+existing = Path('.env')
+template = Path('.env.example')
+known = dotenv_values(existing)
+lines = [line for line in template.read_text().splitlines()
+         if line.startswith('CLIMATE_') and line.split('=', 1)[0] not in known]
+if lines:
+    with existing.open('a') as out:
+        out.write('\n# Climate settings (added by project setup; edit locally as needed)\n')
+        out.write('\n'.join(lines) + '\n')
+    print(f'Appended {len(lines)} new climate settings to .env without changing existing values.')
+PYENV
     chmod 600 "$PROJECT_DIR/.env"
     mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/logs"
     echo "Ready. For an interactive environment: source .venv/bin/activate"

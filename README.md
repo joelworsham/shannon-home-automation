@@ -2,8 +2,9 @@
 
 Python controller for Flair bedroom readings, Open-Meteo outside weather, and the
 Vornado Transom. **The actual climate controller is still dry-run only.**
-This release adds real **opt-in, read-only** Shelly local RPC and a local BroadLink
-connection/IR-codebook adapter, but **neither adapter is called by the controller**.
+This release includes **opt-in, read-only** Shelly local RPC, a guarded
+BroadLink connection/IR-codebook adapter, and a pure simulated safety state
+machine. **Neither physical adapter is called by the controller.**
 The Flair Smart Vent remains independent. Every normal controller run stores a
 detailed audit trail in local SQLite.
 
@@ -44,6 +45,68 @@ cooling continues. Speed 1 is favored for quiet; configurable speed thresholds
 and hysteresis control speeds 2–4. All temperatures are Fahrenheit. Scheduling
 handles overnight windows and Indianapolis daylight saving time. Invalid
 settings fail safely and get logged, rather than issuing hardware commands.
+
+## New: state reconciliation and diagnostics (offline)
+
+The new `safety_state.py` and `temperature_diagnostics.py` modules are pure
+Python and send **no IR/RF commands**. The controller is still dry run.
+
+A state snapshot explicitly separates:
+
+- **Desired**: cooling policy's requested mode/speed.
+- **Commanded**: a command actually attempted, or `NULL` when nothing has
+  been sent. In this release, command attempts can only be saved as
+  `simulated` and are never physically transmitted.
+- **Observed**: a fresh, calibrated Shelly power reading and (only if
+  independently verified) direction and speed. In normal dry-run controller
+  records, these remain `NULL`.
+
+The safety engine allows **at most one next proposed command**. After a power
+IR toggle it demands a **later** wattage observation to confirm that the fan's
+running state changed. If there is no confirmation, it *blocks*, logs a
+fault in simulated scenarios, and will **never blindly retry the toggle**.
+Direction and speed cannot be confirmed by wattage: the initial implementation
+requires manual verification after such commands. This restriction can be
+refined after Tuesday's hardware experiments, but not relaxed by guessing.
+
+Thermal anomaly rules are advisory, not automatic correction. They require a
+window of 3+ measurements and trusted physical-state evidence. They may flag
+rapid cooling with the fan off, warming during verified intake, or cooling
+during verified exhaust while the hallway is warmer. A temperature trend
+**cannot prove reversed airflow**, so these rules do not automatically toggle
+fan direction. Hallway temperatures and verified fan direction are supplied by
+fake samples for now; the live sensor pipeline does not yet supply both.
+
+To run all four deterministic, independent hypothetical cases without any
+network requests, hardware interaction, or production database changes:
+
+```bash
+.venv/bin/python simulate_faults.py
+```
+
+This script exercises: a successful power toggle, a missed IR toggle, stale
+Shelly readings, and suspicious exhaust-temperature trends. It records fake
+events to a **temporary SQLite database**, prints a summary and deletes the
+temporary database when finished. Wattage values are intentionally fictional.
+
+Each normal live dry-run controller call now adds a `device_state_snapshots`
+row with its desired state and `physical_state_unverified`; it never invents an
+observed state or an IR attempt. Failed API calls are also appended as sanitized
+`diagnostic_events` (only failure stage/type, never tokens or full exception text).
+
+After running `./setup.sh --run-once`, inspect the new history tables:
+
+```bash
+.venv/bin/python history.py --decisions 0 --states 10
+.venv/bin/python history.py --decisions 0 --diagnostics 10
+.venv/bin/python history.py --decisions 0 --commands 10
+```
+
+The real controller **does not** yet use the simulated reconciliation engine,
+and the pending-command logic has not been wired into an unattended runtime.
+That is intentional: physical power thresholds and IR transmission behavior
+are still unknown. Existing tables and historical rows are retained by
+additive SQLite migrations.
 
 ## Offline hardware command planning
 
@@ -165,6 +228,9 @@ field is **not validated as the latest Puck measurement time**.
 | `config_activations` | When a config first takes effect or changes (including reverts), with structured JSON before/after differences |
 | `controller_runs` | Every normal attempt, success or error, with start/finish timestamp and failure stage/type |
 | `hardware_observations` | Every explicit live Shelly/BroadLink probe: time, device, measurement metadata or error type; no credentials or packet codes |
+| `device_state_snapshots` | Desired vs last commanded vs verified observed state; a row for every normal dry-run evaluation, plus simulated state transitions |
+| `command_attempts` | Simulated logical commands only; `sent` is prohibited until real hardware verification |
+| `diagnostic_events` | Sanitized API failures and anomalies produced during offline simulations |
 
 Each decision links to its configuration snapshot and controller run. The
 setting snapshots exclude credentials. Prior SQLite records remain intact;
@@ -196,9 +262,10 @@ PY
 **Desired** fan state is not verified physical state. The offline command planner
 and real-device adapters are separate and NOT called by `controller.py`.
 After the BroadLink and Shelly arrive, we must calibrate wattage, capture
-remote packets, validate command/replay behavior, implement deliberate safe
-command execution with logging, add diagnostics, and only then enable live
-automation. Experimental exhaust-assisted warming remains future work.
+remote packets, validate command/replay behavior, and connect the dry-run
+reconciler to durable command delivery and fresh observations before enabling
+live automation. The advisory diagnostics exist in the simulated engine but
+are not yet connected to real fan behavior. Experimental exhaust-assisted warming remains future work.
 
 ## Optional launchd on the studio Mac mini (later)
 
@@ -217,7 +284,7 @@ setup unless you explicitly request `--install-launchd`.
 ```bash
 git add -A
 git diff --cached --name-only # Confirm .env, data/, logs/, .venv/ are absent
-git commit -m 'Add safe local BroadLink and Shelly adapters'
+git commit -m 'Add offline safety state machine and diagnostics'
 git push
 ```
 
@@ -234,6 +301,9 @@ git push
 - `devices/broadlink_local.py`: local BroadLink connection, guarded send and codebook
 - `devices/shelly_local.py`: read-only Shelly status/wattage
 - `hardware_probe.py`: opt-in connectivity probes, SQLite status logging
-- `simulate_hardware.py`: offline IR/wattage scenario runner
+- `simulate_hardware.py`: one-step offline IR/wattage planner
+- `safety_state.py`: never-retry-unconfirmed-toggle, fresh-observation state machine
+- `temperature_diagnostics.py`: advisory, conservative temperature-trend rules
+- `simulate_faults.py`: multiple deterministic scenarios, disposable SQLite history
 - `tests/`: offline unit and mocked integration tests
 - `setup.sh`: dependencies, test runner, optional launchd installer

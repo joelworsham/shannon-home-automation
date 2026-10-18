@@ -132,6 +132,51 @@ def _migrate(conn: sqlite3.Connection) -> None:
             error_type TEXT
         )
     """)
+    # Immutable state/command/diagnostic event history. Add-only migration.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS device_state_snapshots (
+            id INTEGER PRIMARY KEY,
+            recorded_at_utc TEXT NOT NULL,
+            run_id INTEGER REFERENCES controller_runs(id),
+            source TEXT NOT NULL,
+            desired_mode TEXT NOT NULL,
+            desired_speed INTEGER NOT NULL,
+            last_command TEXT,
+            last_command_at_utc TEXT,
+            observed_running INTEGER,
+            observed_at_utc TEXT,
+            observed_watts REAL,
+            verified_direction TEXT,
+            verified_speed INTEGER,
+            reconciliation_status TEXT NOT NULL,
+            planned_command TEXT,
+            note TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS command_attempts (
+            id INTEGER PRIMARY KEY,
+            recorded_at_utc TEXT NOT NULL,
+            command TEXT NOT NULL,
+            disposition TEXT NOT NULL,
+            expected_running INTEGER,
+            note TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS diagnostic_events (
+            id INTEGER PRIMARY KEY,
+            recorded_at_utc TEXT NOT NULL,
+            run_id INTEGER REFERENCES controller_runs(id),
+            source TEXT NOT NULL,
+            code TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            detail TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_state_snapshot_run ON device_state_snapshots(run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_state_snapshot_time ON device_state_snapshots(recorded_at_utc)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_diagnostic_time ON diagnostic_events(recorded_at_utc)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_hardware_observations_time ON hardware_observations(recorded_at_utc)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_decisions_run ON control_decisions(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_readings_run ON sensor_readings(run_id)")
@@ -207,6 +252,12 @@ def mark_failed(run_id: int, stage: str, error: Exception) -> None:
             SET status='error',stage=?,finished_at_utc=?,error_type=?,error_detail=?
             WHERE id=?
         """, (stage, _utc(), type(error).__name__, detail, run_id))
+        conn.execute("""
+            INSERT INTO diagnostic_events
+            (recorded_at_utc,run_id,source,code,severity,detail)
+            VALUES (?,?,?,?,?,?)
+        """, (_utc(), run_id, "live_dry_run", "controller_run_failed", "error",
+              f"Stage {stage}; exception type {type(error).__name__}"))
 
 
 def last_desired_state(*, readonly: bool = False) -> FanState:
@@ -275,6 +326,16 @@ def save_evaluation(
               int(decision.desired != previous), bedroom["temp"] - outdoor["temp"],
               policy.target_f, policy.restart_f, policy.min_cooling_advantage_f,
               _json(values), _json(context)))
+        # Do not confuse desired state with physical state. Shelly isn't yet
+        # connected to the unattended controller, so observed/commanded = NULL.
+        conn.execute("""
+            INSERT INTO device_state_snapshots (
+                recorded_at_utc,run_id,source,desired_mode,desired_speed,
+                reconciliation_status,note
+            ) VALUES (?,?,?,?,?,?,?)
+        """, (now, run_id, "live_dry_run", decision.desired.mode,
+              decision.desired.speed, "physical_state_unverified",
+              "Dry-run decision only; no IR commands or wattage observation"))
         conn.execute("""
             UPDATE controller_runs SET status='success',stage='complete',finished_at_utc=?
             WHERE id=?
@@ -300,3 +361,68 @@ def save_hardware_observation(*, device: str, result: str,
         """, (_utc(), device, result,
               _json(status) if status is not None else None,
               type(error).__name__ if error is not None else None))
+
+
+def save_state_snapshot(*, desired: FanState, observed, outcome, pending=None,
+                        source: str = "simulation", run_id: int | None = None,
+                        at_utc: str | None = None) -> None:
+    """Persist a full reconciliation snapshot. Does not send hardware commands.
+
+    observed/outcome/pending are typed in safety_state.py; avoid import cycles.
+    """
+    if source not in ("simulation", "manual_test", "live_dry_run"):
+        raise ValueError("Unknown state snapshot source")
+    with connect() as conn, conn:
+        conn.execute("""
+            INSERT INTO device_state_snapshots (
+                recorded_at_utc,run_id,source,desired_mode,desired_speed,
+                last_command,last_command_at_utc,observed_running,observed_at_utc,
+                observed_watts,verified_direction,verified_speed,
+                reconciliation_status,planned_command,note
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            at_utc or _utc(), run_id, source, desired.mode, desired.speed,
+            pending.command if pending else None,
+            pending.sent_at.isoformat() if pending else None,
+            None if observed.running is None else int(observed.running),
+            observed.measured_at.isoformat() if observed.measured_at else None,
+            observed.watts, observed.direction, observed.speed,
+            outcome.status, outcome.plan.command, outcome.reason,
+        ))
+
+
+def save_command_attempt(*, command: str, disposition: str, note: str,
+                         expected_running: bool | None = None,
+                         at_utc: str | None = None) -> None:
+    """Audit permitted logical commands; simulator NEVER actually transmits.
+
+    Real sends are not wired in this release. `disposition=simulated` means
+    absolutely no command left this Python process.
+    """
+    if command not in ("power_toggle", "direction_toggle", "speed_up", "speed_down"):
+        raise ValueError("Invalid command")
+    if disposition != "simulated":
+        raise PermissionError("Only simulated command attempts may be saved by this release")
+    with connect() as conn, conn:
+        conn.execute("""
+            INSERT INTO command_attempts
+            (recorded_at_utc,command,disposition,expected_running,note)
+            VALUES (?,?,?,?,?)
+        """, (at_utc or _utc(), command, disposition,
+              None if expected_running is None else int(expected_running), note))
+
+
+def save_diagnostic(*, code: str, detail: str, severity: str = "warning",
+                    source: str = "simulation", run_id: int | None = None,
+                    at_utc: str | None = None) -> None:
+    """Audit detected anomalies; details must contain NO credentials/tokens."""
+    if severity not in ("info", "warning", "error"):
+        raise ValueError("Unknown severity")
+    if source not in ("simulation", "manual_test", "live_dry_run"):
+        raise ValueError("Unknown source")
+    with connect() as conn, conn:
+        conn.execute("""
+            INSERT INTO diagnostic_events
+            (recorded_at_utc,run_id,source,code,severity,detail)
+            VALUES (?,?,?,?,?,?)
+        """, (at_utc or _utc(), run_id, source, code, severity, detail))

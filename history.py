@@ -1,4 +1,4 @@
-"""Read-only inspection of local settings, every decision, and failed runs."""
+"""Read-only inspection of local decisions, state, command and diagnostic history."""
 
 import argparse
 import json
@@ -16,7 +16,16 @@ def main():
     parser.add_argument("--failures", action="store_true", help="Show recent controller errors")
     parser.add_argument("--hardware", type=int, default=0, metavar="N",
                         help="Show last N local hardware probes")
+    parser.add_argument("--states", type=int, default=0, metavar="N",
+                        help="Show N recent desired/commanded/observed state snapshots")
+    parser.add_argument("--commands", type=int, default=0, metavar="N",
+                        help="Show N command attempts (simulation only for now)")
+    parser.add_argument("--diagnostics", type=int, default=0, metavar="N",
+                        help="Show N recent anomalies and failure events")
     args = parser.parse_args()
+    for key in ("states", "commands", "diagnostics"):
+        if not 0 <= getattr(args, key) <= 1000:
+            parser.error(f"--{key} must be 0–1000")
     if args.hardware < 0 or args.hardware > 1000:
         parser.error("--hardware must be 0–1000")
     if args.decisions < 0 or args.decisions > 1000:
@@ -66,6 +75,30 @@ def main():
                     print(f"{row[0]} | {row[1]} | {row[2]} | {details} | {row[4] or ''}")
             except sqlite3.OperationalError as exc:
                 parser.error(f"History schema not up to date. Run controller.py first. ({exc})")
+        if args.states:
+            print("\nDEVICE STATE SNAPSHOTS (latest first, UTC):")
+            for row in conn.execute("""
+                SELECT recorded_at_utc,source,desired_mode,desired_speed,
+                       last_command,observed_running,observed_watts,
+                       verified_direction,verified_speed,reconciliation_status,
+                       planned_command,note
+                FROM device_state_snapshots ORDER BY id DESC LIMIT ?
+            """, (args.states,)):
+                print(" | ".join(str(v) if v is not None else "unknown" for v in row))
+        if args.commands:
+            print("\nCOMMAND ATTEMPTS (latest first, UTC):")
+            for row in conn.execute("""
+                SELECT recorded_at_utc,command,disposition,expected_running,note
+                FROM command_attempts ORDER BY id DESC LIMIT ?
+            """, (args.commands,)):
+                print(" | ".join(str(v) if v is not None else "unknown" for v in row))
+        if args.diagnostics:
+            print("\nDIAGNOSTICS (latest first, UTC):")
+            for row in conn.execute("""
+                SELECT recorded_at_utc,source,code,severity,detail
+                FROM diagnostic_events ORDER BY id DESC LIMIT ?
+            """, (args.diagnostics,)):
+                print(" | ".join(str(v) for v in row))
         if args.failures:
             print("\nFAILED RUNS (UTC):")
             for row in conn.execute("""

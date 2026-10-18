@@ -37,6 +37,8 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM control_decisions').fetchone()[0], 1)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM config_snapshots').fetchone()[0], 1)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM config_activations').fetchone()[0], 1)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM device_state_snapshots').fetchone()[0], 1)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM command_attempts').fetchone()[0], 0)
 
     def test_failed_api_call_creates_error_run(self):
         with patch.object(controller, 'get_outdoor', side_effect=RuntimeError('API unavailable')):
@@ -45,6 +47,7 @@ class ControllerTests(unittest.TestCase):
         with database.connect() as conn:
             self.assertEqual(conn.execute('SELECT status,stage FROM controller_runs').fetchone(), ('error', 'fetch_outdoor'))
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM control_decisions').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT code FROM diagnostic_events').fetchone()[0], 'controller_run_failed')
 
     def test_simulation_does_not_create_db(self):
         with patch('sys.argv', ['controller.py', '--at', '23:00', '--previous', 'off']):

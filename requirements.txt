@@ -1,0 +1,6 @@
+# Dependencies used by check_cooling.py, controller.py, and test scripts.
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+
+# Flair's official Python API client (same package already tested locally).
+git+https://github.com/flair-systems/flair-api-client-py.git

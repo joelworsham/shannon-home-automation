@@ -24,7 +24,7 @@ class SettingsTests(unittest.TestCase):
             os.environ.pop(name, None)
         s = load_settings()
         self.assertEqual((s.policy.target_f, s.policy.restart_f), (60, 64))
-        self.assertEqual(s.policy.speed_thresholds_f, (64, 68, 72))
+        self.assertEqual(s.policy.speed_thresholds_f, (62, 64, 68))
         self.assertEqual(s.policy.schedule_start, time(22))
 
     def test_env_override(self):

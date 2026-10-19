@@ -48,9 +48,9 @@ def load_settings() -> ControllerSettings:
         min_cooling_advantage_f=_number("CLIMATE_MIN_COOLING_ADVANTAGE_F", 5),
         speed_hysteresis_f=_number("CLIMATE_SPEED_HYSTERESIS_F", 0.5),
         speed_thresholds_f=(
-            _number("CLIMATE_SPEED_2_AT_F", 64),
-            _number("CLIMATE_SPEED_3_AT_F", 68),
-            _number("CLIMATE_SPEED_4_AT_F", 72),
+            _number("CLIMATE_SPEED_2_AT_F", 62),
+            _number("CLIMATE_SPEED_3_AT_F", 64),
+            _number("CLIMATE_SPEED_4_AT_F", 68),
         ),
         schedule_start=_clock("CLIMATE_SCHEDULE_START", "22:00"),
         schedule_end=_clock("CLIMATE_SCHEDULE_END", "07:30"),

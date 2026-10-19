@@ -24,7 +24,7 @@ class SettingsTests(unittest.TestCase):
             os.environ.pop(name, None)
         s = load_settings()
         self.assertEqual((s.policy.target_f, s.policy.restart_f), (60, 64))
-        self.assertEqual(s.policy.speed_thresholds_f, (62, 64, 68))
+        self.assertEqual(s.policy.speed_thresholds_f, (None, None, None))
         self.assertEqual(s.policy.schedule_start, time(22))
 
     def test_env_override(self):
@@ -43,6 +43,25 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(schedule_active(t, config))
             d = evaluate(when=t, bedroom_f=63, outdoor_f=40, config=config)
             self.assertEqual(d.desired, FanState("intake", 1))
+
+    def test_only_speed_four_with_blank_thresholds(self):
+        with patch.dict(os.environ, {
+            "CLIMATE_SPEED_2_AT_F": "",
+            "CLIMATE_SPEED_3_AT_F": "  ",
+            "CLIMATE_SPEED_4_AT_F": "60",
+        }):
+            policy = load_settings().policy
+            self.assertEqual(policy.speed_thresholds_f, (None, None, 60))
+            now = datetime(2026, 10, 18, 23, tzinfo=ZoneInfo(policy.timezone))
+            self.assertEqual(evaluate(when=now, bedroom_f=65, outdoor_f=40,
+                                      config=policy).desired, FanState("intake", 4))
+
+    def test_missing_thresholds_are_disabled_and_invalid_text_fails(self):
+        with patch.dict(os.environ, {"CLIMATE_SPEED_3_AT_F": "64"}):
+            self.assertEqual(load_settings().policy.speed_thresholds_f, (None, 64, None))
+        with patch.dict(os.environ, {"CLIMATE_SPEED_4_AT_F": "fast"}):
+            with self.assertRaisesRegex(ValueError, "CLIMATE_SPEED_4_AT_F"):
+                load_settings()
 
     def test_invalid_restart(self):
         with patch.dict(os.environ, {"CLIMATE_TARGET_F": "60", "CLIMATE_RESTART_F": "59"}):

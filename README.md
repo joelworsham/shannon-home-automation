@@ -34,7 +34,7 @@ have precedence** over `.env`.
 
 The fully commented, authoritative template is in [`.env.example`](.env.example).
 It follows the project's convention: each explanation appears **above** its
-variable. Current defaults are target **58°F**, restart **62°F**, speeds 2–4
+variable. Current defaults are target **60°F**, restart **64°F**, speeds 2–4
 at **64/68/72°F**, 5°F outdoor advantage, and 22:00–07:30 Indianapolis time.
 
 

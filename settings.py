@@ -43,8 +43,8 @@ def load_settings() -> ControllerSettings:
     # Real environment variables override the .env file if present.
     load_dotenv(override=False)
     policy = PolicyConfig(
-        target_f=_number("CLIMATE_TARGET_F", 58),
-        restart_f=_number("CLIMATE_RESTART_F", 62),
+        target_f=_number("CLIMATE_TARGET_F", 60),
+        restart_f=_number("CLIMATE_RESTART_F", 64),
         min_cooling_advantage_f=_number("CLIMATE_MIN_COOLING_ADVANTAGE_F", 5),
         speed_hysteresis_f=_number("CLIMATE_SPEED_HYSTERESIS_F", 0.5),
         speed_thresholds_f=(

@@ -12,8 +12,8 @@ TIMEZONE = ZoneInfo("America/Indiana/Indianapolis")
 
 @dataclass(frozen=True)
 class PolicyConfig:
-    target_f: float = 58.0
-    restart_f: float = 62.0
+    target_f: float = 60.0
+    restart_f: float = 64.0
     min_cooling_advantage_f: float = 5.0
     speed_hysteresis_f: float = 0.5
     speed_thresholds_f: tuple[float, float, float] = (64.0, 68.0, 72.0)

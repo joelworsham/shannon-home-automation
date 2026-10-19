@@ -32,21 +32,21 @@ class ClimatePolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             schedule_active(datetime(2026, 10, 18, 23, 0))
 
-    def test_start_cooling_at_63(self):
-        d = evaluate(when=at(23), bedroom_f=63, outdoor_f=41, previous=FanState())
-        self.assertEqual(d.desired, FanState("intake", 1))
+    def test_start_cooling_above_restart(self):
+        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41, previous=FanState())
+        self.assertEqual(d.desired, FanState("intake", 2))
 
     def test_stay_off_below_restart(self):
-        d = evaluate(when=at(23), bedroom_f=61, outdoor_f=41, previous=FanState())
+        d = evaluate(when=at(23), bedroom_f=63, outdoor_f=41, previous=FanState())
         self.assertEqual(d.desired, FanState())
 
-    def test_keep_running_at_60(self):
-        d = evaluate(when=at(23), bedroom_f=60, outdoor_f=41,
+    def test_keep_running_at_61(self):
+        d = evaluate(when=at(23), bedroom_f=61, outdoor_f=41,
                      previous=FanState("intake", 1))
         self.assertEqual(d.desired, FanState("intake", 1))
 
     def test_stop_at_target(self):
-        d = evaluate(when=at(23), bedroom_f=58, outdoor_f=41,
+        d = evaluate(when=at(23), bedroom_f=60, outdoor_f=41,
                      previous=FanState("intake", 1))
         self.assertEqual(d.desired, FanState())
 
@@ -55,9 +55,9 @@ class ClimatePolicyTests(unittest.TestCase):
                      previous=FanState("intake", 2))
         self.assertEqual(d.desired, FanState())
 
-    def test_restart_threshold_exactly_62(self):
-        d = evaluate(when=at(23), bedroom_f=62, outdoor_f=41)
-        self.assertEqual(d.desired, FanState("intake", 1))
+    def test_restart_threshold_exactly_64(self):
+        d = evaluate(when=at(23), bedroom_f=64, outdoor_f=41)
+        self.assertEqual(d.desired, FanState("intake", 2))
 
     def test_speed_2_initial(self):
         d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41)

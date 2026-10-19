@@ -2,7 +2,7 @@
 
 > **Purpose:** Temporary, living record of completed work, open questions, and next steps. Use it for project continuity; do not treat it as a replacement for the code, `README.md`, or `.env.example`. Update after meaningful milestones, then archive or replace with GitHub Issues when appropriate.
 >
-> Last reviewed: **2026-10-18**. Status below reflects repository `main` plus locally reported tests. Statements about hardware are not confirmations until physically verified.
+> Last reviewed: **2026-10-19**. Status below reflects repository `main` plus locally reported tests. Statements about hardware are not confirmations until physically verified.
 
 ## Durable decisions
 
@@ -23,13 +23,15 @@ Defaults in `.env.example` at this review (actual `.env` may override):
 | Parameter | Default |
 | --- | --- |
 | Schedule (Indianapolis local time) | 22:00–07:30 |
-| Cooling target / restart | 58°F / 62°F |
+| Cooling target / restart | 60°F / 64°F |
 | Minimum outdoor cooling advantage | 5°F |
 | Speeds 2 / 3 / 4 from bedroom temperature | 64°F / 68°F / 72°F |
 | Speed hysteresis | 0.5°F |
 | Planned monitoring interval | Five minutes, 24/7 |
 
 Prefer the quietest practical speed. Experimental exhaust-assisted warming should be treated as separate, opt-in functionality rather than assumed to work.
+
+**2026-10-19 configuration change:** Repository defaults changed from 58/62°F to 60/64°F (target/restart). Speed thresholds remain 64/68/72°F. Existing machine-local `.env` values are not changed by repository updates; change them explicitly to adopt the new settings.
 
 ## Work completed / validated to date
 

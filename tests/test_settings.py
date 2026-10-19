@@ -23,7 +23,7 @@ class SettingsTests(unittest.TestCase):
         for name in ("CLIMATE_TARGET_F", "CLIMATE_RESTART_F", "CLIMATE_SPEED_2_AT_F"):
             os.environ.pop(name, None)
         s = load_settings()
-        self.assertEqual((s.policy.target_f, s.policy.restart_f), (58, 62))
+        self.assertEqual((s.policy.target_f, s.policy.restart_f), (60, 64))
         self.assertEqual(s.policy.speed_thresholds_f, (64, 68, 72))
         self.assertEqual(s.policy.schedule_start, time(22))
 

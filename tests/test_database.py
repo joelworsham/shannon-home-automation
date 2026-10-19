@@ -61,10 +61,10 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT count(*) FROM config_snapshots").fetchone()[0], 2)
             self.assertEqual(conn.execute("SELECT count(*) FROM config_activations").fetchone()[0], 3)
             delta = json.loads(conn.execute("SELECT changed_values_json FROM config_activations ORDER BY id DESC LIMIT 1").fetchone()[0])
-            self.assertEqual(delta["climate.target_f"], {"old": 57, "new": 58})
+            self.assertEqual(delta["climate.target_f"], {"old": 57, "new": 60})
             decision = conn.execute("SELECT target_f,restart_f,policy_config_json,reason FROM control_decisions ORDER BY id DESC LIMIT 1").fetchone()
-        self.assertEqual(decision[0:2], (58, 62))
-        self.assertEqual(json.loads(decision[2])["climate"]["target_f"], 58)
+        self.assertEqual(decision[0:2], (60, 64))
+        self.assertEqual(json.loads(decision[2])["climate"]["target_f"], 60)
         self.assertEqual(decision[3], "Start cooling")
 
     def test_failure_logged_without_fake_decision(self):

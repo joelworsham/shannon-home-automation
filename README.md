@@ -26,26 +26,57 @@ are included in the ZIP. Existing SQLite tables/rows are migrated in place.
 
 ## `.env` climate controls
 
-On update, `setup.sh` will append any missing `CLIMATE_*` defaults to your
-existing `.env` without changing your credential values or other settings.
+On update, `setup.sh` will append missing required `CLIMATE_*` defaults
+but **not** absent optional speed thresholds to your existing `.env`. It never
+changes your credential values or user-entered settings.
 Editing those non-secret values on your Mac is all you need to change policy.
 Every scheduled invocation reloads `.env` settings. **OS environment values
 have precedence** over `.env`.
 
 The fully commented, authoritative template is in [`.env.example`](.env.example).
 It follows the project's convention: each explanation appears **above** its
-variable. Current defaults are target **60°F**, restart **64°F**, speeds 2–4
-at **62/64/68°F**, 5°F outdoor advantage, and 22:00–07:30 Indianapolis time.
+variable. The supplied `.env.example` profile has target **60°F**, restart
+**64°F**, speed 2/3/4 thresholds at **62/64/68°F**, 5°F outdoor advantage,
+and 22:00–07:30 Indianapolis time.
 
 
 The target is when the fan should stop cooling. Cooling restarts when the
 bedroom reaches the restart threshold (if outside air is sufficiently cooler).
 Between those thresholds, the previous *desired* state determines whether
-cooling continues. Speed 1 is the default while cooling below 62°F; at or
-below the 60°F target the fan is OFF. Configurable speed thresholds (62°F,
-64°F, 68°F for speeds 2–4) and hysteresis control speed transitions. All temperatures are Fahrenheit. Scheduling
+cooling continues. Speed 1 is the fallback; each of speeds 2–4 is optional.
+Leave its `.env` value empty or remove its line to disable that tier. The
+policy skips disabled tiers when changing speed and still honors hysteresis.
+All temperatures are Fahrenheit. Scheduling
 handles overnight windows and Indianapolis daylight saving time. Invalid
 settings fail safely and get logged, rather than issuing hardware commands.
+
+### Optional fan-speed profiles
+
+The following are alternative settings for your machine-local `.env`:
+
+```dotenv
+# Four-speed profile (the supplied .env.example)
+CLIMATE_SPEED_2_AT_F=62
+CLIMATE_SPEED_3_AT_F=64
+CLIMATE_SPEED_4_AT_F=68
+```
+
+```dotenv
+# Full speed whenever cooling, until the 60°F cooling target is reached
+CLIMATE_SPEED_2_AT_F=
+CLIMATE_SPEED_3_AT_F=
+CLIMATE_SPEED_4_AT_F=60
+```
+
+Any subset of speeds 2–4 may be enabled, such as only speed 3.
+A missing threshold is disabled, including after running `setup.sh`.
+Speed 1 requires no setting and is the fallback only when higher configured
+speeds do not qualify. In the full-speed example, speed 4 qualifies at every
+temperature above the cooling target, so speed 1 is never requested.
+Enabled thresholds must increase in temperature as speed increases.
+The 60°F stop / 64°F restart and outdoor-air requirement still apply.
+On restart the policy selects the highest qualifying speed; once cooling,
+it changes one *enabled* tier per evaluation with hysteresis.
 
 ## New: state reconciliation and diagnostics (offline)
 

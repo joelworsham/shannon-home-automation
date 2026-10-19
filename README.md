@@ -228,6 +228,29 @@ physical fan behavior on power-up, direction toggling, and Shelly wattage
 thresholds still need empirical testing. **This release does not learn or send
 live codes yet.**
 
+## GitHub Actions checks
+
+[The CI workflow](.github/workflows/tests.yml) runs on pull requests targeting
+`main`, pushes to `main`, and manual workflow dispatch. Its single `tests`
+check installs the project's dependencies on a clean Linux/Python 3.11
+runner, checks `setup.sh` syntax, and runs the complete offline regression
+suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Manual network/device probes (`test_flair.py` and `test_weather.py`) are not
+included: CI has no local devices or Flair credentials, and it never sends
+IR/RF signals.
+
+**Important:** GitHub Actions shows passing or failing checks but does not
+itself prevent a merge. To enforce this policy, configure a `main` branch
+ruleset/branch protection in GitHub Settings: require a pull request, require
+the status check named **`tests`** to pass, and prevent bypasses if desired.
+Also require the branch to be up to date before merging to test the current
+base. This protection is separate from the workflow file.
+
 ## Run and test locally
 
 Requires Python 3.10+, Git, and network access for actual Flair/weather calls.

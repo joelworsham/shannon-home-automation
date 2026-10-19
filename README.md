@@ -35,14 +35,15 @@ have precedence** over `.env`.
 The fully commented, authoritative template is in [`.env.example`](.env.example).
 It follows the project's convention: each explanation appears **above** its
 variable. Current defaults are target **60°F**, restart **64°F**, speeds 2–4
-at **64/68/72°F**, 5°F outdoor advantage, and 22:00–07:30 Indianapolis time.
+at **62/64/68°F**, 5°F outdoor advantage, and 22:00–07:30 Indianapolis time.
 
 
 The target is when the fan should stop cooling. Cooling restarts when the
 bedroom reaches the restart threshold (if outside air is sufficiently cooler).
 Between those thresholds, the previous *desired* state determines whether
-cooling continues. Speed 1 is favored for quiet; configurable speed thresholds
-and hysteresis control speeds 2–4. All temperatures are Fahrenheit. Scheduling
+cooling continues. Speed 1 is the default while cooling below 62°F; at or
+below the 60°F target the fan is OFF. Configurable speed thresholds (62°F,
+64°F, 68°F for speeds 2–4) and hysteresis control speed transitions. All temperatures are Fahrenheit. Scheduling
 handles overnight windows and Indianapolis daylight saving time. Invalid
 settings fail safely and get logged, rather than issuing hardware commands.
 
@@ -118,7 +119,7 @@ network calls, live devices, or SQLite writes in the hardware simulator.
 # Example: fan consumes simulated standby wattage, so plan power-on toggle
 .venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 1
 
-# Example: running on speed 1, desired speed 2; plan ONE speed-up command
+# Example: running on speed 1, desired speed 3; plan ONE speed-up command toward it
 .venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 11 --direction intake --speed 1
 
 # Example: no power measurement; refuse unsafe toggle

@@ -34,7 +34,7 @@ class ClimatePolicyTests(unittest.TestCase):
 
     def test_start_cooling_above_restart(self):
         d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41, previous=FanState())
-        self.assertEqual(d.desired, FanState("intake", 2))
+        self.assertEqual(d.desired, FanState("intake", 3))
 
     def test_stay_off_below_restart(self):
         d = evaluate(when=at(23), bedroom_f=63, outdoor_f=41, previous=FanState())
@@ -57,31 +57,32 @@ class ClimatePolicyTests(unittest.TestCase):
 
     def test_restart_threshold_exactly_64(self):
         d = evaluate(when=at(23), bedroom_f=64, outdoor_f=41)
-        self.assertEqual(d.desired, FanState("intake", 2))
+        self.assertEqual(d.desired, FanState("intake", 3))
 
-    def test_speed_2_initial(self):
-        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41)
+    def test_speed_2_when_continuing(self):
+        d = evaluate(when=at(23), bedroom_f=62.6, outdoor_f=41,
+                     previous=FanState("intake", 1))
         self.assertEqual(d.desired.speed, 2)
 
     def test_speed_3_initial(self):
-        d = evaluate(when=at(23), bedroom_f=69, outdoor_f=41)
+        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41)
         self.assertEqual(d.desired.speed, 3)
 
     def test_speed_4_initial(self):
-        d = evaluate(when=at(23), bedroom_f=73, outdoor_f=41)
+        d = evaluate(when=at(23), bedroom_f=69, outdoor_f=41)
         self.assertEqual(d.desired.speed, 4)
 
     def test_hysteresis_prevents_chatter(self):
-        d = evaluate(when=at(23), bedroom_f=64.2, outdoor_f=41,
+        d = evaluate(when=at(23), bedroom_f=62.2, outdoor_f=41,
                      previous=FanState("intake", 1))
         self.assertEqual(d.desired.speed, 1)
-        d = evaluate(when=at(23), bedroom_f=64.6, outdoor_f=41,
+        d = evaluate(when=at(23), bedroom_f=62.6, outdoor_f=41,
                      previous=FanState("intake", 1))
         self.assertEqual(d.desired.speed, 2)
-        d = evaluate(when=at(23), bedroom_f=63.8, outdoor_f=41,
+        d = evaluate(when=at(23), bedroom_f=61.8, outdoor_f=41,
                      previous=FanState("intake", 2))
         self.assertEqual(d.desired.speed, 2)
-        d = evaluate(when=at(23), bedroom_f=63.4, outdoor_f=41,
+        d = evaluate(when=at(23), bedroom_f=61.4, outdoor_f=41,
                      previous=FanState("intake", 2))
         self.assertEqual(d.desired.speed, 1)
 

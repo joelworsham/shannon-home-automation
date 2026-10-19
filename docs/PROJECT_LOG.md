@@ -25,13 +25,15 @@ Defaults in `.env.example` at this review (actual `.env` may override):
 | Schedule (Indianapolis local time) | 22:00–07:30 |
 | Cooling target / restart | 60°F / 64°F |
 | Minimum outdoor cooling advantage | 5°F |
-| Speeds 2 / 3 / 4 from bedroom temperature | 64°F / 68°F / 72°F |
+| Speeds 2 / 3 / 4 from bedroom temperature | 62°F / 64°F / 68°F |
 | Speed hysteresis | 0.5°F |
 | Planned monitoring interval | Five minutes, 24/7 |
 
 Prefer the quietest practical speed. Experimental exhaust-assisted warming should be treated as separate, opt-in functionality rather than assumed to work.
 
 **2026-10-19 configuration change:** Repository defaults changed from 58/62°F to 60/64°F (target/restart). Speed thresholds remain 64/68/72°F. Existing machine-local `.env` values are not changed by repository updates; change them explicitly to adopt the new settings.
+
+**2026-10-19 speed threshold change:** Set the four intended speed boundaries to **60/62/64/68°F for speeds 1–4**. The code expresses speed 1 as the default when active below the 62°F speed-2 cutoff; at or below the 60°F cooling target, the fan stops. Default speed 2/3/4 thresholds changed from 64/68/72°F to 62/64/68°F. Cooling restart remains 64°F; hysteresis remains 0.5°F. Machine-local `.env` values must be updated separately if they override defaults.
 
 ## Work completed / validated to date
 

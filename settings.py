@@ -28,6 +28,17 @@ def _number(name: str, fallback: float) -> float:
         raise ValueError(f"{name} must be a number") from exc
 
 
+def _optional_number(name: str) -> float | None:
+    """Absent or blank speed thresholds disable that speed tier."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number or left blank") from exc
+
+
 def _clock(name: str, fallback: str) -> time:
     raw = os.getenv(name, fallback)
     try:
@@ -48,9 +59,9 @@ def load_settings() -> ControllerSettings:
         min_cooling_advantage_f=_number("CLIMATE_MIN_COOLING_ADVANTAGE_F", 5),
         speed_hysteresis_f=_number("CLIMATE_SPEED_HYSTERESIS_F", 0.5),
         speed_thresholds_f=(
-            _number("CLIMATE_SPEED_2_AT_F", 62),
-            _number("CLIMATE_SPEED_3_AT_F", 64),
-            _number("CLIMATE_SPEED_4_AT_F", 68),
+            _optional_number("CLIMATE_SPEED_2_AT_F"),
+            _optional_number("CLIMATE_SPEED_3_AT_F"),
+            _optional_number("CLIMATE_SPEED_4_AT_F"),
         ),
         schedule_start=_clock("CLIMATE_SCHEDULE_START", "22:00"),
         schedule_end=_clock("CLIMATE_SCHEDULE_END", "07:30"),

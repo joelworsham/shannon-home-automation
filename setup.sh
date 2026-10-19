@@ -102,7 +102,9 @@ existing = Path('.env')
 template = Path('.env.example')
 known = dotenv_values(existing)
 lines = [line for line in template.read_text().splitlines()
-         if line.startswith(('CLIMATE_', 'BROADLINK_', 'SHELLY_')) and line.split('=', 1)[0] not in known]
+         if line.startswith(('CLIMATE_', 'BROADLINK_', 'SHELLY_'))
+         and line.split('=', 1)[0] not in known
+         and line.split('=', 1)[0] not in ('CLIMATE_SPEED_2_AT_F', 'CLIMATE_SPEED_3_AT_F', 'CLIMATE_SPEED_4_AT_F')]
 if lines:
     with existing.open('a') as out:
         out.write('\n# Missing project settings (added by setup; edit locally as needed)\n')

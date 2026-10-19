@@ -25,7 +25,7 @@ Defaults in `.env.example` at this review (actual `.env` may override):
 | Schedule (Indianapolis local time) | 22:00–07:30 |
 | Cooling target / restart | 60°F / 64°F |
 | Minimum outdoor cooling advantage | 5°F |
-| Speeds 2 / 3 / 4 from bedroom temperature | 62°F / 64°F / 68°F |
+| Speeds 2 / 3 / 4 from bedroom temperature | Optional; example preset 62°F / 64°F / 68°F |
 | Speed hysteresis | 0.5°F |
 | Planned monitoring interval | Five minutes, 24/7 |
 
@@ -34,6 +34,8 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 **2026-10-19 configuration change:** Repository defaults changed from 58/62°F to 60/64°F (target/restart). Speed thresholds remain 64/68/72°F. Existing machine-local `.env` values are not changed by repository updates; change them explicitly to adopt the new settings.
 
 **2026-10-19 speed threshold change:** Set the four intended speed boundaries to **60/62/64/68°F for speeds 1–4**. The code expresses speed 1 as the default when active below the 62°F speed-2 cutoff; at or below the 60°F cooling target, the fan stops. Default speed 2/3/4 thresholds changed from 64/68/72°F to 62/64/68°F. Cooling restart remains 64°F; hysteresis remains 0.5°F. Machine-local `.env` values must be updated separately if they override defaults.
+
+**2026-10-19 optional-speed pivot:** Speed 2/3/4 thresholds are independently optional. Blank or absent `.env` values disable their tiers; `setup.sh` does not append intentionally omitted speed settings. Speed 1 stays the implicit fallback when cooling is requested but no enabled higher threshold qualifies. With speed 2/3 unset and speed 4 at 60°F, speed 4 is requested for all active cooling until the 60°F stop target. Speed hysteresis must skip disabled tiers and handle previously desired speeds that have been disabled. Existing 60°F stop / 64°F restart / 5°F cooling advantage and dry-run-only safeguards remain unchanged. Configuration history can store disabled thresholds as `null`. This is a tested policy change, **not** validated physical fan control.
 
 ## Work completed / validated to date
 

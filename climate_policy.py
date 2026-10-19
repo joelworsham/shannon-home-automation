@@ -16,7 +16,7 @@ class PolicyConfig:
     restart_f: float = 64.0
     min_cooling_advantage_f: float = 5.0
     speed_hysteresis_f: float = 0.5
-    speed_thresholds_f: tuple[float, float, float] = (64.0, 68.0, 72.0)
+    speed_thresholds_f: tuple[float, float, float] = (62.0, 64.0, 68.0)
     schedule_start: time = time(22, 0)
     schedule_end: time = time(7, 30)
     timezone: str = "America/Indiana/Indianapolis"

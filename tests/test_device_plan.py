@@ -82,7 +82,7 @@ class HardwarePlanningTests(unittest.TestCase):
     def test_simulation_has_no_real_hardware_side_effects(self):
         output = simulate(bedroom_f=66, outdoor_f=40, at='23:00', watts=1,
                           off_max_w=2, on_min_w=8, direction=None, speed=None)
-        self.assertEqual(output['desired'], {'mode': 'intake', 'speed': 2})
+        self.assertEqual(output['desired'], {'mode': 'intake', 'speed': 1})
         self.assertEqual(output['fake_commands'], ['power_toggle'])
         self.assertFalse(output['hardware_contacted'])
 

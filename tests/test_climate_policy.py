@@ -34,7 +34,7 @@ class ClimatePolicyTests(unittest.TestCase):
             schedule_active(datetime(2026, 10, 18, 23, 0))
 
     def test_start_cooling_above_restart(self):
-        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41, previous=FanState())
+        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41, previous=FanState(), config=FULL_TIERS)
         self.assertEqual(d.desired, FanState("intake", 3))
 
     def test_stay_off_below_restart(self):
@@ -57,39 +57,39 @@ class ClimatePolicyTests(unittest.TestCase):
         self.assertEqual(d.desired, FanState())
 
     def test_restart_threshold_exactly_64(self):
-        d = evaluate(when=at(23), bedroom_f=64, outdoor_f=41)
+        d = evaluate(when=at(23), bedroom_f=64, outdoor_f=41, config=FULL_TIERS)
         self.assertEqual(d.desired, FanState("intake", 3))
 
     def test_speed_2_when_continuing(self):
         d = evaluate(when=at(23), bedroom_f=62.6, outdoor_f=41,
-                     previous=FanState("intake", 1))
+                     previous=FanState("intake", 1), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 2)
 
     def test_speed_3_initial(self):
-        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41)
+        d = evaluate(when=at(23), bedroom_f=65, outdoor_f=41, config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 3)
 
     def test_speed_4_initial(self):
-        d = evaluate(when=at(23), bedroom_f=69, outdoor_f=41)
+        d = evaluate(when=at(23), bedroom_f=69, outdoor_f=41, config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 4)
 
     def test_hysteresis_prevents_chatter(self):
         d = evaluate(when=at(23), bedroom_f=62.2, outdoor_f=41,
-                     previous=FanState("intake", 1))
+                     previous=FanState("intake", 1), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 1)
         d = evaluate(when=at(23), bedroom_f=62.6, outdoor_f=41,
-                     previous=FanState("intake", 1))
+                     previous=FanState("intake", 1), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 2)
         d = evaluate(when=at(23), bedroom_f=61.8, outdoor_f=41,
-                     previous=FanState("intake", 2))
+                     previous=FanState("intake", 2), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 2)
         d = evaluate(when=at(23), bedroom_f=61.4, outdoor_f=41,
-                     previous=FanState("intake", 2))
+                     previous=FanState("intake", 2), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 1)
 
     def test_speed_changes_one_step_per_cycle(self):
         d = evaluate(when=at(23), bedroom_f=80, outdoor_f=41,
-                     previous=FanState("intake", 1))
+                     previous=FanState("intake", 1), config=FULL_TIERS)
         self.assertEqual(d.desired.speed, 2)
 
 

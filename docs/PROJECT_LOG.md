@@ -62,6 +62,11 @@ Do these incrementally, on the home LAN, before enabling real automation:
 5. Calibrate/adjust safety policy and wire real measurements and commands into the controller **behind an explicit enable gate**, with conservative transitions, confirmation, logging, and failure behavior.
 6. Execute supervised tests at different temperature/operating states, then deploy on the studio Mac mini and enable scheduled collection/operation only after verification.
 
+### First physical connectivity probes (2026-10-20)
+
+- **Shelly Plug US Gen4 — local API verified:** User ran `.venv/bin/python hardware_probe.py --shelly` and received `Shelly read-only: 0.00 W; outlet relay ON`. This confirms a successful read-only RPC response and that the plug relay was on at the time. **0 W is not yet a calibrated fan standby measurement**; verify actual Vornado operating and standby wattages later.
+- **BroadLink RM4 Pro — LAN communication reached authentication, but auth failed:** User ran `.venv/bin/python hardware_probe.py --broadlink` and received `broadlink.exceptions.AuthenticationError: [Errno -1] Authentication failed` from `device.auth()`. IP discovery/targeting is adequate to reach an answering device; local authentication is **not yet verified**. Next supervised troubleshooting step: disable the BroadLink app's **Lock Device** setting, then rerun the existing no-transmission probe. If it still fails, inspect firmware/library compatibility and reassess pairing without changing hardware control code prematurely. Do not log local IPs, MAC addresses, or secrets here. No IR/RF transmissions were attempted.
+
 ## Later exploration / backlog
 
 - Validate Hallway room temperature against the Nest thermostat, or integrate Nest separately if needed.

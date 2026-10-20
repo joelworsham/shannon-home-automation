@@ -2,7 +2,7 @@
 
 > **Purpose:** Temporary, living record of completed work, open questions, and next steps. Use it for project continuity; do not treat it as a replacement for the code, `README.md`, or `.env.example`. Update after meaningful milestones, then archive or replace with GitHub Issues when appropriate.
 >
-> Last reviewed: **2026-10-19**. Status below reflects repository `main` plus locally reported tests. Statements about hardware are not confirmations until physically verified.
+> Last reviewed: **2026-10-20**. Status below reflects repository `main` plus locally reported tests. Statements about hardware are not confirmations until physically verified.
 
 ## Durable decisions
 
@@ -49,7 +49,9 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 - **Device adapters:** Local BroadLink and read-only Shelly modules plus opt-in `hardware_probe.py` are in `main`; they have **not** been validated with actual devices.
 - **Setup:** `setup.sh` handles dependencies/tests and offers optional `launchd` installation; repository is synced from development machine. Studio Mac has not been deployed.
 
-## Next milestone: physical hardware validation (pending devices)
+## Next milestone: physical hardware validation (devices received)
+
+**2026-10-20 hardware arrival:** User confirmed both the BroadLink RM4 Pro and Shelly Plug US Gen4 are in hand. **Receipt only**: Wi-Fi provisioning, physical connection, local API connectivity, learned IR/RF commands, and wattage calibration have **not** yet been reported as completed or validated. Begin with read-only local connectivity checks; the Shelly must remain powered and must not be used as the Vornado's routine switch.
 
 Do these incrementally, on the home LAN, before enabling real automation:
 

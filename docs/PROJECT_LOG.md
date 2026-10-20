@@ -51,7 +51,7 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 
 ## Next milestone: physical hardware validation (devices received)
 
-**2026-10-20 hardware arrival:** User confirmed both the BroadLink RM4 Pro and Shelly Plug US Gen4 are in hand. **Receipt only**: Wi-Fi provisioning, physical connection, local API connectivity, learned IR/RF commands, and wattage calibration have **not** yet been reported as completed or validated. Begin with read-only local connectivity checks; the Shelly must remain powered and must not be used as the Vornado's routine switch.
+**2026-10-20 hardware arrival:** User confirmed both the BroadLink RM4 Pro and Shelly Plug US Gen4 are in hand. **2026-10-20 setup update:** User reports **both devices provisioned and connected to Wi-Fi**, and knows the Shelly's local IP. BroadLink's IP still needs to be identified (router client list or local discovery). Local RPC authentication/reachability, learned IR/RF commands, and wattage calibration are **not yet verified**. Keep device IPs and other machine-specific details in the local `.env`, not this log. Begin with read-only local connectivity checks; the Shelly must remain powered and must not be used as the Vornado's routine switch.
 
 Do these incrementally, on the home LAN, before enabling real automation:
 

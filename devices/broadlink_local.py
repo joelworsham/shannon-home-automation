@@ -1,7 +1,7 @@
 """BroadLink RM4 Pro local-network adapter and learned-command codebook.
 
 Local IR/RF replay is disabled unless a caller EXPLICITLY enables transmission.
-The main controller does not create this adapter and remains DRY RUN.
+The controller creates this adapter only in explicitly enabled live mode.
 """
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import binascii
 import json
 from pathlib import Path
 from typing import Callable, Any
+from threading import Lock
+from types import MethodType
 
 from devices.shelly_local import validate_local_host
 
@@ -92,6 +94,7 @@ class BroadLinkLocal:
         self.permit_transmit = permit_transmit
         self.connector = connector or _connect_device
         self._device = None
+        self._send_lock = Lock()
 
     def probe(self) -> str:
         """Connect/authenticate only. Does NOT send IR/RF commands."""
@@ -107,5 +110,16 @@ class BroadLinkLocal:
         # Validate before contacting hardware; never send unknown/incomplete data.
         packet = self.book.packet(command)
         self.probe()
-        self._device.send_data(packet)
+        with self._send_lock:
+            if hasattr(self._device, 'send_packet'):
+                from devices.broadlink_transport import send_packet_once
+                original = self._device.send_packet
+                self._device.send_packet = MethodType(send_packet_once, self._device)
+                try:
+                    self._device.send_data(packet)
+                finally:
+                    self._device.send_packet = original
+            else:
+                # Injected test doubles implement only the send_data boundary.
+                self._device.send_data(packet)
         # send_data success is NOT evidence the real fan changed state.

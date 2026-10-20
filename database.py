@@ -46,6 +46,16 @@ def connect():
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
+    conn.execute('''CREATE TABLE IF NOT EXISTS delivery_attempts (
+        id TEXT PRIMARY KEY, command TEXT NOT NULL, expected_running INTEGER,
+        started_at_utc TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0)''')
+    conn.execute('''CREATE UNIQUE INDEX IF NOT EXISTS ix_delivery_one_pending
+        ON delivery_attempts(resolved) WHERE resolved=0''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS delivery_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_id TEXT NOT NULL REFERENCES delivery_attempts(id),
+        phase TEXT NOT NULL, at_utc TEXT NOT NULL, details_json TEXT NOT NULL)''')
+    _upgrade_column(conn, 'delivery_attempts', 'run_id', 'INTEGER')
     # Preserve original table names, IDs, and all existing rows.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sensor_readings (
@@ -242,7 +252,7 @@ def update_stage(run_id: int, stage: str) -> None:
         conn.execute("UPDATE controller_runs SET stage=? WHERE id=?", (stage, run_id))
 
 
-def mark_failed(run_id: int, stage: str, error: Exception) -> None:
+def mark_failed(run_id: int, stage: str, error: Exception, *, live: bool = False) -> None:
     # Avoid storing HTTP exception messages that might contain credentials/tokens.
     # Configuration validation errors contain only public config keys/values.
     detail = str(error)[:250] if stage == "load_settings" and isinstance(error, ValueError) else None
@@ -256,7 +266,7 @@ def mark_failed(run_id: int, stage: str, error: Exception) -> None:
             INSERT INTO diagnostic_events
             (recorded_at_utc,run_id,source,code,severity,detail)
             VALUES (?,?,?,?,?,?)
-        """, (_utc(), run_id, "live_dry_run", "controller_run_failed", "error",
+        """, (_utc(), run_id, "live_control" if live else "live_dry_run", "controller_run_failed", "error",
               f"Stage {stage}; exception type {type(error).__name__}"))
 
 
@@ -284,9 +294,9 @@ def last_desired_state(*, readonly: bool = False) -> FanState:
 
 def save_evaluation(
     *, run_id: int, config_snapshot_id: int, bedroom: dict, outdoor: dict,
-    previous: FanState, decision: Decision, settings: ControllerSettings,
+    previous: FanState, decision: Decision, settings: ControllerSettings, live: bool = False,
 ) -> None:
-    """Atomic append of sensor readings, full reasoning context and run success."""
+    """Append policy evidence; live runs stay pending until hardware evaluation."""
     policy = settings.policy
     values = settings.as_public_dict()
     with connect() as conn, conn:
@@ -310,7 +320,8 @@ def save_evaluation(
             "reason_code": decision.reason_code,
             "reason": decision.reason,
             "state_changed": decision.desired != previous,
-            "hardware_commands_sent": False,
+            "hardware_commands_sent": None if live else False,
+            "hardware_mode": "live_pending" if live else "dry_run",
         }
         conn.execute("""
             INSERT INTO control_decisions
@@ -322,24 +333,26 @@ def save_evaluation(
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (now, bedroom["temp"], outdoor["temp"], int(decision.scheduled),
               previous.mode, previous.speed, decision.desired.mode, decision.desired.speed,
-              decision.reason, 0, run_id, config_snapshot_id, decision.reason_code,
+              decision.reason, -1 if live else 0, run_id, config_snapshot_id, decision.reason_code,
               int(decision.desired != previous), bedroom["temp"] - outdoor["temp"],
               policy.target_f, policy.restart_f, policy.min_cooling_advantage_f,
               _json(values), _json(context)))
-        # Do not confuse desired state with physical state. Shelly isn't yet
-        # connected to the unattended controller, so observed/commanded = NULL.
+        # The policy evaluation alone provides no physical state. Live hardware
+        # observations are appended separately by the guarded runtime.
         conn.execute("""
             INSERT INTO device_state_snapshots (
                 recorded_at_utc,run_id,source,desired_mode,desired_speed,
                 reconciliation_status,note
             ) VALUES (?,?,?,?,?,?,?)
-        """, (now, run_id, "live_dry_run", decision.desired.mode,
+        """, (now, run_id, "live_control" if live else "live_dry_run", decision.desired.mode,
               decision.desired.speed, "physical_state_unverified",
+              "Awaiting guarded hardware evaluation" if live else
               "Dry-run decision only; no IR commands or wattage observation"))
         conn.execute("""
-            UPDATE controller_runs SET status='success',stage='complete',finished_at_utc=?
+            UPDATE controller_runs SET status=?,stage=?,finished_at_utc=?
             WHERE id=?
-        """, (_utc(), run_id))
+        """, ('running' if live else 'success', 'hardware_control' if live else 'complete',
+              None if live else _utc(), run_id))
 
 
 def save_hardware_observation(*, device: str, result: str,
@@ -363,6 +376,30 @@ def save_hardware_observation(*, device: str, result: str,
               type(error).__name__ if error is not None else None))
 
 
+def finish_hardware_run(run_id: int, outcome: dict, *, failed=False):
+    """Derive delivery accounting from durable intent/ack events, not guesses.
+
+    command_sent=-1 means uncertain; 1 means at least one acknowledged packet;
+    0 means no recorded transmission attempt. These are not physical outcomes.
+    """
+    with connect() as conn, conn:
+        phases = [r[0] for r in conn.execute('''SELECT e.phase FROM delivery_events e
+            JOIN delivery_attempts a ON a.id=e.attempt_id WHERE a.run_id=?''', (run_id,))]
+        attempts = sum(p in ('wake_attempt', 'action_attempt') for p in phases)
+        acks = sum(p in ('wake_acknowledged', 'action_acknowledged') for p in phases)
+        sent = -1 if attempts > acks else int(acks > 0)
+        for row_id, raw in conn.execute('SELECT id,decision_context_json FROM control_decisions WHERE run_id=?', (run_id,)).fetchall():
+            context = json.loads(raw)
+            context.update(hardware_mode='live', hardware_commands_sent=None if sent == -1 else bool(sent),
+                           hardware_outcome=outcome)
+            conn.execute('UPDATE control_decisions SET command_sent=?,decision_context_json=? WHERE id=?',
+                         (sent, _json(context), row_id))
+        if not failed:
+            conn.execute('UPDATE controller_runs SET status=?,stage=?,finished_at_utc=? WHERE id=?',
+                ('success' if outcome['status'] in ('satisfied', 'power_confirmed') else 'blocked',
+                 'hardware_' + outcome['status'], _utc(), run_id))
+
+
 def save_state_snapshot(*, desired: FanState, observed, outcome, pending=None,
                         source: str = "simulation", run_id: int | None = None,
                         at_utc: str | None = None) -> None:
@@ -370,7 +407,7 @@ def save_state_snapshot(*, desired: FanState, observed, outcome, pending=None,
 
     observed/outcome/pending are typed in safety_state.py; avoid import cycles.
     """
-    if source not in ("simulation", "manual_test", "live_dry_run"):
+    if source not in ("simulation", "manual_test", "live_dry_run", "live_control"):
         raise ValueError("Unknown state snapshot source")
     with connect() as conn, conn:
         conn.execute("""

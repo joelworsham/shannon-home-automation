@@ -1,12 +1,143 @@
 # Bedroom climate automation
 
 Python controller for Flair bedroom readings, Open-Meteo outside weather, and the
-Vornado Transom. **The actual climate controller is still dry-run only.**
-This release includes **opt-in, read-only** Shelly local RPC, a guarded
-BroadLink connection/IR-codebook adapter, and a pure simulated safety state
-machine. **Neither physical adapter is called by the controller.**
+Vornado Transom. **The controller defaults to dry-run.** Explicit live mode
+connects read-only Shelly observations and guarded BroadLink delivery for one
+policy action per invocation. Ordinary runs and existing scheduled jobs remain
+dry-run, even when the hardware environment setting is enabled.
 The Flair Smart Vent remains independent. Every normal controller run stores a
 detailed audit trail in local SQLite.
+
+## Wake-aware delivery foundation
+
+Supervised October 20 diagnostics established display wake followed by a
+successful power action and a speed-up action with approximately one-second
+spacing. The six-second display timeout remains user-reported. See
+`docs/PROJECT_LOG.md` for measurements and limitations. The original short
+wattage ranges cannot identify speed reliably; use independently verified
+speed/direction and calibrated, settled power evidence.
+
+`wake_delivery.py` provides the guarded delivery API used by explicit live
+controller runs. Run its completely offline demonstration with:
+
+```bash
+.venv/bin/python simulate_delivery.py
+```
+
+The delivery API is disabled by default. `load_delivery_settings()` reads the
+new settings in `.env.example`; callers must pass those settings to
+`WakeAwareDelivery`. Setting `HARDWARE_CONTROL_ENABLED=true` alone **does not
+enable the controller**, install scheduling, or send anything. Real delivery
+also requires a BroadLink adapter constructed with `permit_transmit=True`.
+The live CLI is described below; no unattended live loop is installed.
+
+Delivery requires exclusive control: nobody uses the app or original remote
+during a sequence. On a new session, expired estimate, or invalidation, it
+waits a full display timeout plus timing margin, rereads physical evidence,
+sends the captured `speed_up` as a wake, waits one second, rereads evidence,
+and sends at most one planned action. The short speed-up capture demonstrated
+wake-only behavior; an arbitrary command is not assumed harmless. Timing
+settings reflect tested behavior plus user reports, not hardware guarantees.
+
+After an acknowledged command, the display is only **assumed awake** until
+the conservative deadline. Another verified action within that window skips
+the wake. Slow observations or logging that consume the awake window block
+the action. `invalidate_display()` must be called on known app/manual activity
+or loss of exclusive control; external IR activity cannot be discovered from
+our command log. After a restart, awake estimates are never reused.
+
+`execute(desired, observe, exclusive_control=True)` accepts the existing
+`FanState` and a callback returning fresh `PowerObservation` evidence. It
+uses the existing reconciler, so unknown power, speed, or direction blocks
+commands that need them. The callback owns power calibration and settling;
+this API does not classify speed from watts or assume a successful IR send
+changed anything. Physical observations must be quick enough for the awake
+window. Do not fabricate timestamps or repeat old speed/direction guesses.
+
+Before any send, a durable attempt is reserved in SQLite. A macOS/Linux file
+lock excludes simultaneous execution and manual resolution. Its unresolved
+status blocks other instances and survives crashes. Acknowledgements and
+display estimates are stored separately from physical confirmation.
+`confirm_power(attempt_id, observation)` requires a later, fresh, matching
+power observation. Speed/direction verification and uncertain/interrupted
+attempts require explicit `resolve_manually(..., note=...)` with new physical
+evidence. Manual resolution invalidates the awake estimate and does not retry.
+Keep notes free of credentials and private device addresses.
+
+`delivery_attempts` and `delivery_events` are additive tables in the existing
+SQLite database; older history and the simulated-only `command_attempts`
+table are preserved. Missing acknowledgement or logging failure leaves the
+attempt unresolved. BroadLink IR delivery now uses a single UDP send: a lost
+acknowledgement never triggers a transport retry. A captured packet can still
+contain repeated IR frames; one UDP send does not prove one physical action.
+
+The new transport and delivery layer have offline regression coverage. They
+have **not been exercised against hardware since implementation**; the earlier
+physical diagnostics used ad hoc scripts. Deployment remains separate work.
+
+## One guarded live evaluation
+
+Configure `SHELLY_HOST`, `BROADLINK_HOST`, the captured codebook, and explicit
+power thresholds in local `.env`. `FAN_STANDBY_MAX_W` and `FAN_RUNNING_MIN_W`
+are intentionally blank in the template: the standby ceiling must be below
+the running floor; readings in the gap stay unknown. Choose conservative
+thresholds from the calibration record, not the narrow per-speed ranges.
+Also set `HARDWARE_CONTROL_ENABLED=true` when intentionally enabling live use.
+This documentation does not change your local settings.
+
+```bash
+# One real climate evaluation and at most one policy action, plus wake if needed.
+# --exclusive-control asserts nobody uses the app/remote during this run.
+.venv/bin/python controller.py --live --exclusive-control
+```
+
+The policy still honors schedule, outdoor advantage, temperature hysteresis,
+and optional speed tiers. This is not an arbitrary command-replay CLI. It can
+start/stop based on verified power; a running fan needs independently verified
+direction/speed before the planner can adjust those attributes. Supply current
+physical observations only when you actually inspected them, for example:
+
+```bash
+# Example observations only: replace with the actual state you just inspected.
+.venv/bin/python controller.py --live --exclusive-control --verified-direction intake --verified-speed 2
+```
+
+These observations expire after 30 seconds by default and are invalidated
+after an action. They are not inferred from watts, reused from old chat
+messages, or stored as perpetual truth. Do not put fixed verified-state flags
+in a scheduler. A power-on confirmation does not establish restored fan speed
+or direction, and a single run does not automatically complete every step
+toward the desired state.
+
+`power_observer.py` logs every Shelly reading and requires at least three
+consistent classifications spanning two seconds by default. Relay OFF,
+transition mixtures, threshold-gap readings, or invalid/stale timestamps mean
+unknown or failure, not standby. After a command, it discards prior samples,
+waits six seconds by default, then collects new evidence. A prior pending
+power action may be confirmed on a later invocation, but that run sends no new
+command. Speed/direction actions remain pending until manual verification.
+
+Review durable attempts and resolve a specific attempt after inspection:
+
+```bash
+.venv/bin/python history.py --decisions 0 --deliveries 10
+# Copy the actual attempt ID. This recovery command reads Shelly but never sends IR.
+.venv/bin/python hardware_runtime.py --resolve-attempt ATTEMPT_ID --note "Inspected fan; display shows speed 2" --verified-speed 2
+```
+
+Recovery requires explicit configured power thresholds and fresh consistent
+power evidence. Speed-command recovery requires `--verified-speed`; direction
+recovery requires `--verified-direction`. Resolve based on what actually
+happened, even if the command failed. The controller will reevaluate from new
+evidence; recovery itself never retries a command.
+
+Live runs link delivery attempts to controller run IDs. In decision history,
+`command_sent=1` means at least one acknowledged packet, `0` means no recorded
+send attempt, and `-1` means pending/uncertain transmission. None proves the
+fan responded. Physical confirmations and uncertain outcomes are recorded
+separately. Legacy dry-run history stays intact.
+
+`--live` cannot be combined with `--at`. No flags still means dry-run.
 
 ## Full-release upgrade
 
@@ -81,7 +212,8 @@ it changes one *enabled* tier per evaluation with hysteresis.
 ## New: state reconciliation and diagnostics (offline)
 
 The new `safety_state.py` and `temperature_diagnostics.py` modules are pure
-Python and send **no IR/RF commands**. The controller is still dry run.
+Python and send **no IR/RF commands**. Normal controller runs remain dry-run;
+explicit live runs use reconciliation through the guarded runtime above.
 
 A state snapshot explicitly separates:
 
@@ -134,11 +266,9 @@ After running `./setup.sh --run-once`, inspect the new history tables:
 .venv/bin/python history.py --decisions 0 --commands 10
 ```
 
-The real controller **does not** yet use the simulated reconciliation engine,
-and the pending-command logic has not been wired into an unattended runtime.
-That is intentional: physical power thresholds and IR transmission behavior
-are still unknown. Existing tables and historical rows are retained by
-additive SQLite migrations.
+The explicitly enabled live controller uses reconciliation and durable delivery
+barriers; the offline fault scenarios remain simulations. Existing tables and
+historical rows are retained by additive SQLite migrations.
 
 ## Offline hardware command planning
 
@@ -192,8 +322,8 @@ Included modules:
   being off; manually restore power using the Shelly app if needed.
 - `devices/broadlink_local.py`: local BroadLink RM4 Pro targeted discovery,
   authentication and learned IR/RF code loading. Transmission requires a
-  caller to explicitly set `permit_transmit=True`. The application does not
-  set this or invoke `send()`.
+  caller to explicitly set `permit_transmit=True`. Only the explicitly enabled
+  live controller path sets this; normal dry-run runs never call it.
 - `hardware_probe.py`: intentional *manual* local device connectivity checks,
   no IR/RF transmission and no Shelly relay switching. Records successful
   probes and failed attempts to SQLite `hardware_observations` (error type only).
@@ -202,8 +332,9 @@ Included modules:
   no fake codes are supplied. Future local codebook path:
   `data/remote_codes.json` (local and Git-ignored).
 
-**Nothing to configure until the products arrive.** On Tuesday, find the
-LAN IP of each device and set `SHELLY_HOST` / `BROADLINK_HOST` in `.env`.
+Configure the LAN host of each device using `SHELLY_HOST` / `BROADLINK_HOST`
+in `.env`. Both devices have passed local connectivity diagnostics on the
+development machine; other installations must perform their own checks.
 Then run these **manual** checks separately:
 
 ```bash
@@ -225,8 +356,9 @@ The BroadLink must be configured on 2.4 GHz Wi-Fi and may require disabling
 computer and devices must be reachable on the same LAN. RF compatibility
 with the ceiling-fan remote is still *untested*. The exact Vornado codes,
 physical fan behavior on power-up, direction toggling, and Shelly wattage
-thresholds still need empirical testing. **This release does not learn or send
-live codes yet.**
+thresholds need validation for each installation. The bundled probe never
+learns or sends codes. Original-remote captures and supervised replay results
+from this installation are documented in the project log; raw codes stay local.
 
 ## GitHub Actions checks
 
@@ -278,7 +410,7 @@ field is **not validated as the latest Puck measurement time**.
 | Table | What gets recorded |
 | --- | --- |
 | `sensor_readings` | Indoor/outdoor temperatures, humidity, dew point and source timestamps for each successful evaluation |
-| `control_decisions` | **Every successful evaluation**, even when state doesn't change; previous/desired state, reason, reason code, schedule status, target/restart/minimum advantage, full JSON inputs and effective settings; `command_sent=0` |
+| `control_decisions` | Every saved policy evaluation, previous/desired state and complete configuration context; dry-run has `command_sent=0`, live uses the delivery accounting described above |
 | `config_snapshots` | Every distinct complete **non-secret** effective climate/weather configuration |
 | `config_activations` | When a config first takes effect or changes (including reverts), with structured JSON before/after differences |
 | `controller_runs` | Every normal attempt, success or error, with start/finish timestamp and failure stage/type |
@@ -286,6 +418,7 @@ field is **not validated as the latest Puck measurement time**.
 | `device_state_snapshots` | Desired vs last commanded vs verified observed state; a row for every normal dry-run evaluation, plus simulated state transitions |
 | `command_attempts` | Simulated logical commands only; `sent` is prohibited until real hardware verification |
 | `diagnostic_events` | Sanitized API failures and anomalies produced during offline simulations |
+| `delivery_attempts` / `delivery_events` | Live delivery intent, acknowledgements, uncertainty, display estimates, and physical resolution, linked to controller run IDs |
 
 Each decision links to its configuration snapshot and controller run. The
 setting snapshots exclude credentials. Prior SQLite records remain intact;
@@ -314,12 +447,10 @@ with sqlite3.connect('data/bedroom.sqlite3') as db:
 PY
 ```
 
-**Desired** fan state is not verified physical state. The offline command planner
-and real-device adapters are separate and NOT called by `controller.py`.
-After the BroadLink and Shelly arrive, we must calibrate wattage, capture
-remote packets, validate command/replay behavior, and connect the dry-run
-reconciler to durable command delivery and fresh observations before enabling
-live automation. The advisory diagnostics exist in the simulated engine but
+**Desired** fan state is not verified physical state. Explicit live mode connects
+the planner and adapters through guarded delivery; ordinary runs stay dry-run.
+Power calibration, fresh physical evidence, and exclusive control are required
+before live use. The advisory diagnostics exist in the simulated engine but
 are not yet connected to real fan behavior. Experimental exhaust-assisted warming remains future work.
 
 ## Optional launchd on the studio Mac mini (later)
@@ -345,7 +476,10 @@ git push
 
 ## Canonical application modules
 
-- `controller.py`: single entry point, dry run
+- `controller.py`: dry-run default, explicit one-action live mode
+- `hardware_runtime.py`: hardware integration and no-transmission manual recovery
+- `power_observer.py`: settled power windows and expiring manual observations
+- `wake_delivery.py` / `delivery_store.py`: wake timing and durable delivery barriers
 - `settings.py`: validates `.env` climate settings
 - `climate_policy.py`: pure schedule/temperature/speed policy
 - `check_cooling.py`: Flair + Open-Meteo data acquisition

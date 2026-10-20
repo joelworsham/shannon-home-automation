@@ -22,8 +22,10 @@ def main():
                         help="Show N command attempts (simulation only for now)")
     parser.add_argument("--diagnostics", type=int, default=0, metavar="N",
                         help="Show N recent anomalies and failure events")
+    parser.add_argument('--deliveries', type=int, default=0, metavar='N',
+                        help='Show guarded delivery attempts and their events')
     args = parser.parse_args()
-    for key in ("states", "commands", "diagnostics"):
+    for key in ("states", "commands", "diagnostics", "deliveries"):
         if not 0 <= getattr(args, key) <= 1000:
             parser.error(f"--{key} must be 0–1000")
     if args.hardware < 0 or args.hardware > 1000:
@@ -106,6 +108,16 @@ def main():
                 FROM controller_runs WHERE status='error' ORDER BY id DESC LIMIT 20
             """):
                 print(" | ".join(str(x) for x in row if x is not None))
+        if args.deliveries:
+            print('\nGUARDED DELIVERIES (latest first, UTC):')
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='delivery_attempts'").fetchone():
+                print('No guarded delivery history yet.')
+            else:
+                for row in conn.execute('SELECT id,command,expected_running,started_at_utc,resolved '
+                                        'FROM delivery_attempts ORDER BY rowid DESC LIMIT ?', (args.deliveries,)):
+                    print(f'{row[0]} | {row[3]} | {row[1]} | expected_running={row[2]} | resolved={bool(row[4])}')
+                    for event in conn.execute('SELECT at_utc,phase,details_json FROM delivery_events WHERE attempt_id=? ORDER BY id', (row[0],)):
+                        print(f'  {event[0]} | {event[1]} | {event[2]}')
 
 
 if __name__ == "__main__":

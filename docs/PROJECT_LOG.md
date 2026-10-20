@@ -51,7 +51,7 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 
 ## Next milestone: physical hardware validation (devices received)
 
-**2026-10-20 hardware arrival:** User confirmed both the BroadLink RM4 Pro and Shelly Plug US Gen4 are in hand. **2026-10-20 setup update:** User reports **both devices provisioned and connected to Wi-Fi**, and knows the Shelly's local IP. BroadLink's IP still needs to be identified (router client list or local discovery). Local RPC authentication/reachability, learned IR/RF commands, and wattage calibration are **not yet verified**. Keep device IPs and other machine-specific details in the local `.env`, not this log. Begin with read-only local connectivity checks; the Shelly must remain powered and must not be used as the Vornado's routine switch.
+**2026-10-20 hardware arrival and connection:** Both devices received, Wi-Fi-provisioned, and reached successfully through their existing local read-only/connection probes. The Shelly's relay was ON; BroadLink local authentication works after disabling **Lock Device** in the BroadLink app. Device IPs remain in the machine-local `.env`, not this log. Next: measure Vornado standby and four-speed wattage, then supervised IR learning and replay. Neither real fan control nor power calibration has been validated; the Shelly must remain powered and must not be used as the Vornado's routine switch.
 
 Do these incrementally, on the home LAN, before enabling real automation:
 
@@ -65,7 +65,7 @@ Do these incrementally, on the home LAN, before enabling real automation:
 ### First physical connectivity probes (2026-10-20)
 
 - **Shelly Plug US Gen4 — local API verified:** User ran `.venv/bin/python hardware_probe.py --shelly` and received `Shelly read-only: 0.00 W; outlet relay ON`. This confirms a successful read-only RPC response and that the plug relay was on at the time. **0 W is not yet a calibrated fan standby measurement**; verify actual Vornado operating and standby wattages later.
-- **BroadLink RM4 Pro — LAN communication reached authentication, but auth failed:** User ran `.venv/bin/python hardware_probe.py --broadlink` and received `broadlink.exceptions.AuthenticationError: [Errno -1] Authentication failed` from `device.auth()`. IP discovery/targeting is adequate to reach an answering device; local authentication is **not yet verified**. Next supervised troubleshooting step: disable the BroadLink app's **Lock Device** setting, then rerun the existing no-transmission probe. If it still fails, inspect firmware/library compatibility and reassess pairing without changing hardware control code prematurely. Do not log local IPs, MAC addresses, or secrets here. No IR/RF transmissions were attempted.
+- **BroadLink RM4 Pro — local authentication verified:** First `.venv/bin/python hardware_probe.py --broadlink` failed at `device.auth()` with `broadlink.exceptions.AuthenticationError: [Errno -1] Authentication failed` because **Lock Device** was ON in the BroadLink app. User disabled that setting and reran the same probe; it returned **`BroadLink local connection successful: rm4pro (no commands sent)`**. This verifies targeted LAN communication and authentication using the existing Python adapter, **not** IR/RF learning, transmission, or physical fan control. Keep the BroadLink's local-access implications in mind on the trusted home LAN; avoid storing IPs/MACs here.
 
 ## Later exploration / backlog
 

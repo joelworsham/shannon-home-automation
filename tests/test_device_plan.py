@@ -47,7 +47,7 @@ class HardwarePlanningTests(unittest.TestCase):
         self.assertTrue(p.verify_after)
 
     def test_unknown_direction_blocks(self):
-        p = plan_next_command(FanState('intake', 1), Observation(running=True, speed=2))
+        p = plan_next_command(FanState('intake', 1), Observation(running=True, speed=4))
         self.assertTrue(p.blocked)
         self.assertIsNone(p.command)
 
@@ -55,20 +55,21 @@ class HardwarePlanningTests(unittest.TestCase):
         p = plan_next_command(FanState('intake', 1), Observation(running=True, direction='exhaust', speed=1))
         self.assertEqual(p.command, 'direction_toggle')
 
-    def test_unknown_speed_blocks(self):
+    def test_unknown_speed_can_establish_endpoint(self):
         p = plan_next_command(FanState('intake', 1), Observation(running=True, direction='intake'))
-        self.assertTrue(p.blocked)
+        self.assertFalse(p.blocked)
+        self.assertEqual(p.command, 'set_low')
 
-    def test_speed_up_one_step(self):
+    def test_set_high(self):
         p = plan_next_command(FanState('intake', 4), Observation(running=True, direction='intake', speed=1))
-        self.assertEqual(p.command, 'speed_up')
+        self.assertEqual(p.command, 'set_high')
 
-    def test_speed_down_one_step(self):
+    def test_set_low(self):
         p = plan_next_command(FanState('intake', 1), Observation(running=True, direction='intake', speed=4))
-        self.assertEqual(p.command, 'speed_down')
+        self.assertEqual(p.command, 'set_low')
 
     def test_unchanged_state(self):
-        p = plan_next_command(FanState('intake', 2), Observation(running=True, direction='intake', speed=2))
+        p = plan_next_command(FanState('intake', 4), Observation(running=True, direction='intake', speed=4))
         self.assertIsNone(p.command)
         self.assertFalse(p.blocked)
 
@@ -86,9 +87,21 @@ class HardwarePlanningTests(unittest.TestCase):
         self.assertEqual(output['fake_commands'], ['power_toggle'])
         self.assertFalse(output['hardware_contacted'])
 
+    def test_simulation_expands_endpoint_to_four_presses(self):
+        output = simulate(bedroom_f=66, outdoor_f=40, at='23:00', watts=30,
+                          off_max_w=2, on_min_w=8, direction='intake', speed=None)
+        self.assertEqual(output['plan']['command'], 'set_low')
+        self.assertEqual(output['fake_commands'], ['speed_down'] * 4)
+        self.assertFalse(output['hardware_contacted'])
+
+    def test_intermediate_speed_observations_rejected(self):
+        for speed in (2, 3):
+            with self.subTest(speed=speed), self.assertRaises(ValueError):
+                Observation(True, 'intake', speed)
+
     def test_outside_schedule_simulation(self):
         output = simulate(bedroom_f=72, outdoor_f=40, at='12:00', watts=9,
-                          off_max_w=2, on_min_w=8, direction='intake', speed=3)
+                          off_max_w=2, on_min_w=8, direction='intake', speed=4)
         self.assertEqual(output['desired'], {'mode': 'off', 'speed': 0})
         self.assertEqual(output['fake_commands'], ['power_toggle'])
 

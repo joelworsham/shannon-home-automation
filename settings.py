@@ -96,7 +96,7 @@ def _number(name: str, fallback: float) -> float:
 
 
 def _optional_number(name: str) -> float | None:
-    """Absent or blank speed thresholds disable that speed tier."""
+    """Return None for an absent or blank optional numeric setting."""
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return None
@@ -125,11 +125,7 @@ def load_settings() -> ControllerSettings:
         restart_f=_number("CLIMATE_RESTART_F", 64),
         min_cooling_advantage_f=_number("CLIMATE_MIN_COOLING_ADVANTAGE_F", 5),
         speed_hysteresis_f=_number("CLIMATE_SPEED_HYSTERESIS_F", 0.5),
-        speed_thresholds_f=(
-            _optional_number("CLIMATE_SPEED_2_AT_F"),
-            _optional_number("CLIMATE_SPEED_3_AT_F"),
-            _optional_number("CLIMATE_SPEED_4_AT_F"),
-        ),
+        high_at_f=_optional_number("CLIMATE_HIGH_AT_F"),
         schedule_start=_clock("CLIMATE_SCHEDULE_START", "22:00"),
         schedule_end=_clock("CLIMATE_SCHEDULE_END", "07:30"),
         timezone=os.getenv("CLIMATE_TIMEZONE", "America/Indiana/Indianapolis").strip(),

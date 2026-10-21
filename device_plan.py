@@ -1,7 +1,7 @@
 """Pure, cautious Vornado IR reconciliation plan.
 
 For the standard Transom, power and airflow direction are toggle commands;
-speed is adjusted incrementally. Shelly power readings distinguish likely
+low/high are established by saturating the physical speed buttons. Shelly power readings distinguish likely
 running/standby after calibration but do not prove direction or speed.
 
 This module never controls a physical device and makes no vendor API calls.
@@ -48,8 +48,8 @@ class Observation:
     def __post_init__(self):
         if self.direction not in (None, "intake", "exhaust"):
             raise ValueError("Direction must be intake, exhaust or unknown")
-        if self.speed is not None and self.speed not in (1, 2, 3, 4):
-            raise ValueError("Speed must be 1–4 or unknown")
+        if self.speed is not None and self.speed not in (1, 4):
+            raise ValueError("Speed must be low (1), high (4), or unknown")
 
 
 @dataclass(frozen=True)
@@ -57,16 +57,16 @@ class CommandPlan:
     command: str | None
     reason: str
     blocked: bool = False
-    # A non-idempotent IR command must not be repeatedly sent without updating evidence.
+    # Power/direction toggles require confirmation; endpoint actions require verification.
     verify_after: bool = False
 
 
 def plan_next_command(desired: FanState, observed: Observation) -> CommandPlan:
-    """Return AT MOST ONE step. Caller must re-observe before proceeding.
+    """Return at most one logical action. Re-observe after delivery.
 
     Unknown running state always blocks a power toggle. Starting the fan must
     be followed by new power measurement; direction and speed never assumed.
-    This is a planning API only; no command delivery is implemented yet.
+    Unknown speed can be replaced by a deterministic low/high endpoint action.
     """
     if observed.running is None:
         return CommandPlan(None, "Power state unknown; wait for Shelly evidence", blocked=True)
@@ -83,10 +83,16 @@ def plan_next_command(desired: FanState, observed: Observation) -> CommandPlan:
         return CommandPlan(None, "Airflow direction unknown; require initial calibration", blocked=True)
     if observed.direction != "intake":
         return CommandPlan("direction_toggle", "Fan running in exhaust; request intake; verify manually", verify_after=True)
-    if observed.speed is None:
-        return CommandPlan(None, "Fan speed unknown; calibrate speed before incremental commands", blocked=True)
-    if observed.speed < desired.speed:
-        return CommandPlan("speed_up", "Raise fan speed by one step", verify_after=True)
-    if observed.speed > desired.speed:
-        return CommandPlan("speed_down", "Lower fan speed by one step", verify_after=True)
-    return CommandPlan(None, "Fan already at desired intake speed")
+    if observed.speed == desired.speed:
+        return CommandPlan(None, "Fan already at desired intake speed")
+    command = "set_low" if desired.speed == 1 else "set_high"
+    return CommandPlan(command, "Establish requested speed endpoint with four button presses", verify_after=True)
+
+
+def command_buttons(command: str) -> tuple[str, ...]:
+    """Expand one logical action; endpoint sequences never depend on starting speed."""
+    if command in ("set_low", "set_high"):
+        return (("speed_down" if command == "set_low" else "speed_up"),) * 4
+    if command in ("power_toggle", "direction_toggle"):
+        return (command,)
+    raise ValueError(f"Unsupported fan action: {command}")

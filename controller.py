@@ -25,8 +25,9 @@ def _print_result(now, bedroom, outdoor, previous, decision, config, saved: bool
     print(f"Bedroom: {bedroom['temp']:.1f}°F; outside: {outdoor['temp']:.1f}°F")
     print(f"Settings: target={config.policy.target_f:g}°F, restart={config.policy.restart_f:g}°F, "
           f"outdoor advantage={config.policy.min_cooling_advantage_f:g}°F")
-    print(f"Previous desired: {previous.mode} (speed {previous.speed})")
-    print(f"Desired: {decision.desired.mode} (speed {decision.desired.speed})")
+    speed_names = {0: 'off', 1: 'low', 4: 'high'}
+    print(f"Previous desired: {previous.mode} (speed {speed_names[previous.speed]})")
+    print(f"Desired: {decision.desired.mode} (speed {speed_names[decision.desired.speed]})")
     print(f"Decision: {decision.reason_code} — {decision.reason}")
     print("SQLite: run, reading, config and decision saved" if saved
           else "SQLite: unchanged (simulation)")
@@ -41,13 +42,14 @@ def _print_result(now, bedroom, outdoor, previous, decision, config, saved: bool
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--at", metavar="HH:MM", help="Simulate local time; NO DB writes")
-    parser.add_argument("--previous", choices=("off", "intake1", "intake2", "intake3", "intake4"),
+    parser.add_argument("--previous", choices=("off", "intake-low", "intake-high"),
                         help="Override previous desired state (only with --at)")
     parser.add_argument('--live', action='store_true', help='One guarded hardware evaluation; also requires env enable')
     parser.add_argument('--exclusive-control', action='store_true', help='Confirm no app/original-remote use during delivery')
-    parser.add_argument('--verified-speed', type=int, choices=range(1, 5), help='Physically verified NOW, never a desired value')
+    parser.add_argument('--verified-speed', choices=('low', 'high'), help='Physically verified NOW, never a desired value')
     parser.add_argument('--verified-direction', choices=('intake', 'exhaust'), help='Physically verified NOW')
     args = parser.parse_args()
+    args.verified_speed = {'low': 1, 'high': 4}.get(args.verified_speed)
     if args.previous and not args.at:
         parser.error("--previous requires --at")
     if args.live and (args.at or not args.exclusive_control):
@@ -72,7 +74,7 @@ def main() -> None:
         bedroom = get_bedroom()
         outdoor = get_outdoor()
         previous = (FanState() if args.previous == "off" else
-                    FanState("intake", int(args.previous[-1])) if args.previous else
+                    FanState("intake", 1 if args.previous == "intake-low" else 4) if args.previous else
                     last_desired_state(readonly=True))
         decision = evaluate(when=now, bedroom_f=bedroom["temp"],
                             outdoor_f=outdoor["temp"], previous=previous,

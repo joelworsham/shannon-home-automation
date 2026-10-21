@@ -6,7 +6,7 @@ from climate_policy import FanState
 from safety_state import PendingCommand, PowerObservation, reconcile
 
 T = datetime(2026, 1, 15, 23, 0, tzinfo=timezone.utc)
-DESIRED = FanState('intake', 2)
+DESIRED = FanState('intake', 4)
 
 
 class SafetyStateTests(unittest.TestCase):
@@ -59,12 +59,12 @@ class SafetyStateTests(unittest.TestCase):
     def test_observed_running_cannot_prove_direction(self):
         result = reconcile(desired=DESIRED, observed=PowerObservation(True, T, watts=11), now=T)
         self.assertEqual(result.status, 'blocked')
-        self.assertEqual(result.diagnostic_code, 'unknown_airflow_or_speed')
+        self.assertEqual(result.diagnostic_code, 'unknown_airflow')
 
     def test_speed_command_requires_manual_confirmation(self):
-        pending = PendingCommand('speed_up', T)
+        pending = PendingCommand('set_high', T)
         result = reconcile(desired=DESIRED, observed=PowerObservation(True, T + timedelta(minutes=2),
-                              direction='intake', speed=2), pending=pending,
+                              direction='intake', speed=4), pending=pending,
                               now=T + timedelta(minutes=2))
         self.assertEqual(result.diagnostic_code, 'manual_verification_required')
         self.assertIsNone(result.plan.command)
@@ -72,7 +72,7 @@ class SafetyStateTests(unittest.TestCase):
     def test_potential_speed_change_with_explicit_verification(self):
         result = reconcile(desired=DESIRED,
                            observed=PowerObservation(True, T, direction='intake', speed=1), now=T)
-        self.assertEqual(result.plan.command, 'speed_up')
+        self.assertEqual(result.plan.command, 'set_high')
 
     def test_reject_naive_timestamps(self):
         with self.assertRaises(ValueError):

@@ -24,14 +24,14 @@ class StateHistoryTests(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def test_device_snapshots_are_immutable_and_unknowns_null(self):
-        desired = FanState('intake', 2)
+        desired = FanState('intake', 4)
         observed = PowerObservation(None)
         result = reconcile(desired=desired, observed=observed, now=T)
         database.save_state_snapshot(desired=desired, observed=observed, outcome=result)
         with database.connect() as conn:
             row = conn.execute('''SELECT desired_mode,desired_speed,last_command,observed_running,
                                   reconciliation_status FROM device_state_snapshots''').fetchone()
-        self.assertEqual(row, ('intake', 2, None, None, 'blocked'))
+        self.assertEqual(row, ('intake', 4, None, None, 'blocked'))
 
     def test_live_dry_run_no_phantom_ir_commands(self):
         from climate_policy import Decision, PolicyConfig
@@ -41,12 +41,12 @@ class StateHistoryTests(unittest.TestCase):
         sid = database.activate_config(run, config)
         database.save_evaluation(run_id=run, config_snapshot_id=sid,
             bedroom={'temp': 66, 'humidity': 45}, outdoor={'temp': 45}, previous=FanState(),
-            decision=Decision(FanState('intake',2),'Start cooling',True,'start_cooling'), settings=config)
+            decision=Decision(FanState('intake', 4),'Start cooling',True,'start_cooling'), settings=config)
         with database.connect() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM command_attempts').fetchone()[0], 0)
             row = conn.execute('''SELECT desired_mode,desired_speed,last_command,observed_running,
                                   reconciliation_status FROM device_state_snapshots''').fetchone()
-        self.assertEqual(row, ('intake', 2, None, None, 'physical_state_unverified'))
+        self.assertEqual(row, ('intake', 4, None, None, 'physical_state_unverified'))
 
     def test_live_failure_creates_diagnostic_without_secrets(self):
         run = database.begin_run()

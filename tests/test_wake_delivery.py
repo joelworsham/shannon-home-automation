@@ -66,7 +66,7 @@ class DeliveryTests(unittest.TestCase):
         with sqlite3.connect(self.path) as conn:
             phases = [r[0] for r in conn.execute('SELECT phase FROM delivery_events ORDER BY id')]
         self.assertEqual(phases, ['planned', 'quiet_wait', 'wake_attempt',
-                                 'wake_acknowledged', 'action_attempt', 'action_acknowledged'])
+                                 'wake_acknowledged', 'action_attempt', 'action_acknowledged', 'action_completed'])
         self.assertEqual(DeliveryStore().pending(attempt)[0], 'power_toggle')
 
     def test_pending_survives_restart_and_blocks_other_instances(self):
@@ -160,18 +160,107 @@ class DeliveryTests(unittest.TestCase):
             self.engine.execute(FanState(), lambda: old, exclusive_control=True)
         self.assertEqual(self.blaster.commands, [])
 
-    def test_unknown_speed_not_inferred_from_watts(self):
+    def test_unknown_speed_establishes_high_endpoint(self):
+        self.engine.execute(FanState('intake', 4), lambda: self.observation(speed=None),
+                            exclusive_control=True)
+        self.assertEqual(self.blaster.commands, ['speed_up'] * 5)  # wake plus four actions
+        self.assertEqual(self.clock.waits, [6.25, 1, 1, 1, 1])
+
+    def test_endpoint_saturates_from_every_physical_start_and_is_repeatable(self):
+        for target, button in ((1, 'speed_down'), (4, 'speed_up')):
+            for initial in range(1, 5):
+                with self.subTest(target=target, initial=initial):
+                    physical = [initial]
+                    def send(command):
+                        # A sleeping display consumes the wake press.
+                        awake = self.engine.display_estimate == 'assumed_awake'
+                        self.blaster.commands.append(command)
+                        if awake:
+                            physical[0] = max(1, min(4, physical[0] + (1 if command == 'speed_up' else -1)))
+                    self.blaster.send = send
+                    for _ in range(2):
+                        self.blaster.commands.clear()
+                        self.engine.invalidate_display()
+                        attempt = self.engine.execute(FanState('intake', target),
+                            lambda: self.observation(speed=None), exclusive_control=True)
+                        self.assertEqual(self.blaster.commands, ['speed_up'] + [button] * 4)
+                        self.assertEqual(physical[0], target)
+                        self.clock.sleep(0.1)
+                        self.engine.resolve_manually(attempt, self.observation(speed=target), note='Checked endpoint')
+
+    def test_awake_endpoint_actions_use_exactly_four_presses(self):
+        for target, button in ((1, 'speed_down'), (4, 'speed_up')):
+            with self.subTest(target=target):
+                start = self.engine.execute(FanState('intake', target),
+                    lambda: self.observation(False), exclusive_control=True)
+                self.clock.sleep(0.1)
+                self.engine.confirm_power(start, self.observation(True))
+                self.blaster.commands.clear()
+                attempt = self.engine.execute(FanState('intake', target),
+                    lambda: self.observation(speed=None), exclusive_control=True)
+                self.assertEqual(self.blaster.commands, [button] * 4)
+                self.clock.sleep(0.1)
+                self.engine.resolve_manually(attempt, self.observation(speed=target), note='Checked endpoint')
+
+    def test_journal_failure_between_endpoint_presses_prevents_next_send(self):
+        original = self.engine.store.event
+        action_attempts = [0]
+        def event(attempt, phase, now, **details):
+            if phase == 'action_attempt':
+                action_attempts[0] += 1
+                if action_attempts[0] == 2:
+                    raise OSError('disk full')
+            original(attempt, phase, now, **details)
+        self.engine.store.event = event
+        with self.assertRaises(OSError):
+            self.engine.execute(FanState('intake', 4), self.observation, exclusive_control=True)
+        self.assertEqual(self.blaster.commands, ['speed_up', 'speed_up'])
         with self.assertRaises(DeliveryBlocked):
-            self.engine.execute(FanState('intake', 2), lambda: self.observation(speed=None),
-                                exclusive_control=True)
-        self.assertEqual(self.blaster.commands, [])
+            self.make_engine().execute(FanState('intake', 4), self.observation, exclusive_control=True)
+
+    def test_partial_endpoint_failure_stops_sequence_and_blocks_restart(self):
+        def send(command):
+            self.blaster.commands.append(command)
+            if len(self.blaster.commands) == 3:
+                raise TimeoutError('lost acknowledgement')
+        self.blaster.send = send
+        with self.assertRaises(TimeoutError):
+            self.engine.execute(FanState('intake', 4), self.observation, exclusive_control=True)
+        with self.assertRaises(DeliveryBlocked):
+            self.make_engine().execute(FanState('intake', 4), self.observation, exclusive_control=True)
+        self.assertEqual(len(self.blaster.commands), 3)
+        with database.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM delivery_events WHERE phase='action_completed'").fetchone()[0], 0)
+
+    def test_display_expires_between_endpoint_presses(self):
+        waits = [0]
+        def sleep(seconds):
+            waits[0] += 1
+            self.clock.sleep(10 if waits[0] == 3 else seconds)
+        self.engine.sleep = sleep
+        with self.assertRaises(DeliveryBlocked):
+            self.engine.execute(FanState('intake', 4), self.observation, exclusive_control=True)
+        self.assertEqual(self.blaster.commands, ['speed_up', 'speed_up'])
+        self.assertIsNotNone(self.engine.store.current())
+
+    def test_external_activity_between_endpoint_presses(self):
+        waits = [0]
+        def sleep(seconds):
+            waits[0] += 1
+            self.clock.sleep(seconds)
+            if waits[0] == 3:
+                self.engine.invalidate_display()
+        self.engine.sleep = sleep
+        with self.assertRaises(DeliveryBlocked):
+            self.engine.execute(FanState('intake', 4), self.observation, exclusive_control=True)
+        self.assertEqual(self.blaster.commands, ['speed_up', 'speed_up'])
 
     def test_speed_needs_manual_resolution(self):
-        attempt = self.engine.execute(FanState('intake', 2), self.observation, exclusive_control=True)
+        attempt = self.engine.execute(FanState('intake', 4), self.observation, exclusive_control=True)
         self.clock.sleep(0.1)
         with self.assertRaises(DeliveryBlocked):
-            self.engine.confirm_power(attempt, self.observation(speed=2))
-        self.engine.resolve_manually(attempt, self.observation(speed=2), note='Display shows speed 2')
+            self.engine.confirm_power(attempt, self.observation(speed=4))
+        self.engine.resolve_manually(attempt, self.observation(speed=4), note='Display shows high')
         self.assertEqual(self.engine.display_estimate, 'unknown')
         with self.assertRaises(DeliveryBlocked):
             DeliveryStore().pending(attempt)

@@ -106,13 +106,14 @@ def main():
     parser = argparse.ArgumentParser(description='Resolve a delivery after physical inspection; never transmits IR')
     parser.add_argument('--resolve-attempt', required=True)
     parser.add_argument('--note', required=True, help='Physical findings, without private addresses or credentials')
-    parser.add_argument('--verified-speed', type=int, choices=range(1, 5))
+    parser.add_argument('--verified-speed', choices=('low', 'high'))
     parser.add_argument('--verified-direction', choices=('intake', 'exhaust'))
     args = parser.parse_args()
+    args.verified_speed = {'low': 1, 'high': 4}.get(args.verified_speed)
     settings = load_delivery_settings()
     power = load_power_settings()
     command, _, _ = DeliveryStore().pending(args.resolve_attempt)
-    if command in ('speed_up', 'speed_down') and args.verified_speed is None:
+    if command in ('set_low', 'set_high') and args.verified_speed is None:
         parser.error('Speed recovery requires --verified-speed from physical inspection')
     if command == 'direction_toggle' and args.verified_direction is None:
         parser.error('Direction recovery requires --verified-direction from physical inspection')
@@ -121,7 +122,7 @@ def main():
     observer = SettledPowerObserver(meter, power, speed=args.verified_speed, direction=args.verified_direction)
     time.sleep(power.settle_s)
     observed = observer()
-    if command in ('speed_up', 'speed_down') and observed.speed is None:
+    if command in ('set_low', 'set_high') and observed.speed is None:
         parser.error('Speed evidence expired or fan power is uncertain; inspect again')
     if command == 'direction_toggle' and observed.direction is None:
         parser.error('Direction evidence expired or fan power is uncertain; inspect again')

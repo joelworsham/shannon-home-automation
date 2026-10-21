@@ -60,7 +60,7 @@ class RuntimeTests(unittest.TestCase):
             monotonic=lambda: self.clock.value, utcnow=self.clock.now, **kwargs)
 
     def test_power_on_one_action_then_settled_confirmation(self):
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'power_confirmed')
         self.assertEqual([c for _, c in self.commands], ['speed_up', 'power_toggle'])
         action_at = self.commands[-1][0]
@@ -83,30 +83,30 @@ class RuntimeTests(unittest.TestCase):
 
     def test_unknown_direction_blocks_running_fan(self):
         self.running = True
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'blocked')
         self.assertEqual(self.commands, [])
 
     def test_speed_action_remains_pending_for_manual_verification(self):
         self.running = True
         self.runtime.observer = self.make_observer(speed=1, direction='intake')
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'awaiting_manual_verification')
-        self.assertEqual([c for _, c in self.commands], ['speed_up', 'speed_up'])
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        self.assertEqual([c for _, c in self.commands], ['speed_up'] * 5)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'blocked')
-        self.assertEqual(len(self.commands), 2)
+        self.assertEqual(len(self.commands), 5)
 
     def test_missing_power_response_never_retries(self):
         self.blaster.send = lambda command: self.commands.append((self.clock.value, command))
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'blocked')
-        result = self.runtime.tick(FanState('intake', 2), exclusive_control=True)
+        result = self.runtime.tick(FanState('intake', 4), exclusive_control=True)
         self.assertEqual(result['status'], 'blocked')
         self.assertEqual(len(self.commands), 2)
 
     def test_pending_confirmation_waits_for_settling_then_stops_this_run(self):
-        attempt = self.delivery.execute(FanState('intake', 2), self.observer, exclusive_control=True)
+        attempt = self.delivery.execute(FanState('intake', 4), self.observer, exclusive_control=True)
         action_at = self.commands[-1][0]
         result = self.runtime.tick(FanState(), exclusive_control=True)
         self.assertEqual(result['status'], 'power_confirmed')
@@ -174,7 +174,7 @@ class RuntimeTests(unittest.TestCase):
              patch.object(controller, 'load_delivery_settings', return_value=DeliverySettings(enabled=True)), \
              patch.object(controller, 'get_bedroom', return_value={'temp': 68}), \
              patch.object(controller, 'get_outdoor', return_value={'temp': 40}), \
-             patch.object(controller, 'evaluate', return_value=Decision(FanState('intake', 2), 'Cool', True, 'start_cooling')), \
+             patch.object(controller, 'evaluate', return_value=Decision(FanState('intake', 4), 'Cool', True, 'start_cooling')), \
              patch('hardware_runtime.build_runtime', side_effect=build):
             controller.main()
         with database.connect() as conn:
@@ -187,12 +187,12 @@ class RuntimeTests(unittest.TestCase):
     def test_manual_recovery_cli_resolves_without_a_blaster(self):
         import hardware_runtime
         self.running = True
-        attempt = self.delivery.store.claim('speed_up', None, self.clock.now())
+        attempt = self.delivery.store.claim('set_high', None, self.clock.now())
         self.delivery.store.event(attempt, 'action_attempt', self.clock.now())
         def observer(meter, settings, **kwargs):
             return self.make_observer(**kwargs)
         with patch('sys.argv', ['hardware_runtime.py', '--resolve-attempt', attempt,
-                               '--note', 'Inspected actual speed', '--verified-speed', '2']), \
+                               '--note', 'Inspected actual speed', '--verified-speed', 'high']), \
              patch('sys.stdout', new_callable=io.StringIO), \
              patch.object(hardware_runtime, 'load_delivery_settings', return_value=DeliverySettings()), \
              patch.object(hardware_runtime, 'load_power_settings', return_value=self.power), \

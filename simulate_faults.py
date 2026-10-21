@@ -18,7 +18,7 @@ from safety_state import PendingCommand, PowerObservation, reconcile
 from temperature_diagnostics import ThermalSample, check_temperature_trend
 
 BASE = datetime(2026, 1, 15, 23, 0, tzinfo=timezone.utc)
-DESIRED = FanState('intake', 2)
+DESIRED = FanState('intake', 4)
 
 
 def run_scenarios() -> dict:

@@ -104,7 +104,7 @@ known = dotenv_values(existing)
 lines = [line for line in template.read_text().splitlines()
          if line.startswith(('CLIMATE_', 'BROADLINK_', 'SHELLY_'))
          and line.split('=', 1)[0] not in known
-         and line.split('=', 1)[0] not in ('CLIMATE_SPEED_2_AT_F', 'CLIMATE_SPEED_3_AT_F', 'CLIMATE_SPEED_4_AT_F')]
+         and line.split('=', 1)[0] not in ('CLIMATE_HIGH_AT_F',)]
 if lines:
     with existing.open('a') as out:
         out.write('\n# Missing project settings (added by setup; edit locally as needed)\n')
@@ -124,6 +124,14 @@ install_launchd() {
     fi
     install_deps
     check_env
+    INTERVAL_SECONDS="$("$VENV_PYTHON" - <<'PYINTERVAL'
+from dotenv import dotenv_values
+value = dotenv_values('.env').get('COLLECTOR_INTERVAL_SECONDS', '300')
+if value is None or not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 2147483647:
+    raise SystemExit('COLLECTOR_INTERVAL_SECONDS must be a whole number from 1 to 2147483647.')
+print(int(value))
+PYINTERVAL
+)"
     mkdir -p "$(dirname "$LAUNCHD_PLIST")" "$PROJECT_DIR/logs"
 
     # plistlib properly escapes macOS paths, even if the path contains spaces.

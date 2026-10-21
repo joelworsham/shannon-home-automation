@@ -16,23 +16,22 @@ class PolicyConfig:
     restart_f: float = 64.0
     min_cooling_advantage_f: float = 5.0
     speed_hysteresis_f: float = 0.5
-    speed_thresholds_f: tuple[float | None, float | None, float | None] = (None, None, None)
+    high_at_f: float | None = None
     schedule_start: time = time(22, 0)
     schedule_end: time = time(7, 30)
     timezone: str = "America/Indiana/Indianapolis"
 
     def __post_init__(self) -> None:
         temps = (self.target_f, self.restart_f, self.min_cooling_advantage_f,
-                 self.speed_hysteresis_f, *(t for t in self.speed_thresholds_f if t is not None))
+                 self.speed_hysteresis_f)
+        if self.high_at_f is not None:
+            temps += (self.high_at_f,)
         if any(not isfinite(v) for v in temps):
             raise ValueError("Climate settings must be finite numbers")
         if self.restart_f <= self.target_f:
             raise ValueError("CLIMATE_RESTART_F must exceed CLIMATE_TARGET_F")
         if self.min_cooling_advantage_f < 0 or self.speed_hysteresis_f < 0:
             raise ValueError("Cooling advantage and speed hysteresis must be nonnegative")
-        enabled_thresholds = [t for t in self.speed_thresholds_f if t is not None]
-        if any(a >= b for a, b in zip(enabled_thresholds, enabled_thresholds[1:])):
-            raise ValueError("Enabled speed thresholds must be strictly increasing")
         if self.schedule_start == self.schedule_end:
             raise ValueError("Schedule start and end must differ")
         ZoneInfo(self.timezone)  # Reject misspelled IANA time zone names.
@@ -43,7 +42,7 @@ class PolicyConfig:
             "restart_f": self.restart_f,
             "min_cooling_advantage_f": self.min_cooling_advantage_f,
             "speed_hysteresis_f": self.speed_hysteresis_f,
-            "speed_thresholds_f": list(self.speed_thresholds_f),
+            "high_at_f": self.high_at_f,
             "schedule_start": self.schedule_start.strftime("%H:%M"),
             "schedule_end": self.schedule_end.strftime("%H:%M"),
             "timezone": self.timezone,
@@ -58,8 +57,8 @@ class FanState:
     def __post_init__(self) -> None:
         if self.mode == "off" and self.speed != 0:
             raise ValueError("Off mode requires speed 0")
-        if self.mode == "intake" and self.speed not in (1, 2, 3, 4):
-            raise ValueError("Intake speed must be 1–4")
+        if self.mode == "intake" and self.speed not in (1, 4):
+            raise ValueError("Intake speed must be low (1) or high (4)")
         if self.mode not in ("off", "intake"):
             raise ValueError(f"Unsupported mode: {self.mode}")
 
@@ -82,37 +81,20 @@ def schedule_active(when: datetime, config: PolicyConfig = PolicyConfig()) -> bo
     return local_time >= start or local_time < end
 
 
-def _enabled_speeds(config: PolicyConfig) -> tuple[int, ...]:
-    """Speed 1 is the fallback; unset thresholds disable speeds 2–4."""
-    return (1,) + tuple(speed for speed, threshold in enumerate(config.speed_thresholds_f, 2)
-                        if threshold is not None)
-
-
 def _initial_speed(temp_f: float, config: PolicyConfig) -> int:
-    for speed in reversed(_enabled_speeds(config)):
-        if speed == 1 or temp_f >= config.speed_thresholds_f[speed - 2]:
-            return speed
-    return 1
+    return 4 if config.high_at_f is not None and temp_f >= config.high_at_f else 1
 
 
 def _speed_with_hysteresis(temp_f: float, previous_speed: int, config: PolicyConfig) -> int:
-    """Move one enabled tier per evaluation, skipping disabled tiers."""
-    enabled = _enabled_speeds(config)
-    if previous_speed not in enabled:
-        # A threshold can be disabled while the fan is already running.
-        return _initial_speed(temp_f, config)
-    index = enabled.index(previous_speed)
-    if index + 1 < len(enabled):
-        next_speed = enabled[index + 1]
-        next_threshold = config.speed_thresholds_f[next_speed - 2]
-        # A tier at/below the target is always eligible while cooling:
-        # no need to wait for hysteresis above a stop temperature.
-        if next_threshold <= config.target_f or temp_f >= next_threshold + config.speed_hysteresis_f:
-            return next_speed
-    if index > 0:
-        current_threshold = config.speed_thresholds_f[previous_speed - 2]
-        if temp_f < current_threshold - config.speed_hysteresis_f:
-            return enabled[index - 1]
+    threshold = config.high_at_f
+    if threshold is None:
+        return 1
+    if threshold <= config.target_f:
+        return 4
+    if previous_speed == 1 and temp_f >= threshold + config.speed_hysteresis_f:
+        return 4
+    if previous_speed == 4 and temp_f < threshold - config.speed_hysteresis_f:
+        return 1
     return previous_speed
 
 

@@ -436,7 +436,7 @@ def save_command_attempt(*, command: str, disposition: str, note: str,
     Real sends are not wired in this release. `disposition=simulated` means
     absolutely no command left this Python process.
     """
-    if command not in ("power_toggle", "direction_toggle", "speed_up", "speed_down"):
+    if command not in ("power_toggle", "direction_toggle", "set_low", "set_high"):
         raise ValueError("Invalid command")
     if disposition != "simulated":
         raise PermissionError("Only simulated command attempts may be saved by this release")

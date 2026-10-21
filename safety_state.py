@@ -53,7 +53,7 @@ class PendingCommand:
 
     def __post_init__(self):
         _aware(self.sent_at)
-        if self.command not in ('power_toggle', 'direction_toggle', 'speed_up', 'speed_down'):
+        if self.command not in ('power_toggle', 'direction_toggle', 'set_low', 'set_high'):
             raise ValueError('Unsupported Vornado command')
         if self.command == 'power_toggle' and self.expected_running is None:
             raise ValueError('Power toggle requires expected running state')
@@ -98,7 +98,7 @@ def reconcile(
         elapsed = (now - pending.sent_at).total_seconds()
         if pending.command != 'power_toggle':
             if elapsed >= confirmation_timeout_s:
-                return _stop('blocked', 'Incremental/direction command needs manual verification; no automatic retry',
+                return _stop('blocked', 'Endpoint/direction command needs manual verification; no automatic retry',
                              'manual_verification_required')
             return _stop('awaiting_confirmation', 'Direction/speed not verifiable by watts')
         if (sample_time is not None and sample_time > pending.sent_at
@@ -119,4 +119,4 @@ def reconcile(
     plan = plan_next_command(desired, Observation(observed.running, observed.direction, observed.speed))
     return SafetyDecision('blocked' if plan.blocked else ('ready' if plan.command else 'satisfied'),
                           plan.reason, plan,
-                          'unknown_airflow_or_speed' if plan.blocked else None)
+                          'unknown_airflow' if plan.blocked else None)

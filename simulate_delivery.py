@@ -32,7 +32,7 @@ def main():
                 running[0] = not running[0]
 
     def observe():
-        return PowerObservation(running[0], now(), 'intake', 2)
+        return PowerObservation(running[0], now(), 'intake', 4)
 
     def engine():
         return WakeAwareDelivery(SimulatedFan(), settings=DeliverySettings(enabled=True),
@@ -47,7 +47,7 @@ def main():
             sleep(0.1)
             delivery.confirm_power(first, observe())
             print('OFF confirmed with fake evidence; commands:', ', '.join(commands))
-            delivery.execute(FanState('intake', 2), observe, exclusive_control=True)
+            delivery.execute(FanState('intake', 4), observe, exclusive_control=True)
             print('ON attempted inside awake window; commands:', ', '.join(commands))
             try:
                 engine().execute(FanState(), observe, exclusive_control=True)

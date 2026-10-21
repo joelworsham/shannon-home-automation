@@ -8,6 +8,7 @@ import time
 
 from delivery_store import DeliveryBlocked, DeliveryStore
 from safety_state import reconcile
+from device_plan import command_buttons
 from settings import DeliverySettings
 
 
@@ -43,7 +44,7 @@ class WakeAwareDelivery:
         return observation, result.plan.command
 
     def execute(self, desired, observe, *, exclusive_control=False, run_id=None):
-        """Deliver one policy action, then leave a durable verification barrier.
+        """Deliver one policy action (four presses for speed), then require verification.
 
         observe() supplies freshly verified PowerObservation, not a wattage-
         guessed speed/direction. The caller owns calibrated power classification.
@@ -84,7 +85,13 @@ class WakeAwareDelivery:
                 raise DeliveryBlocked('State changed before action; verify wake effects')
             if generation != self._generation or self.display_estimate != 'assumed_awake':
                 raise DeliveryBlocked('Awake window expired or was invalidated; no action')
-            self._send(attempt, 'action', command)
+            for index, button in enumerate(command_buttons(command)):
+                if index:
+                    self.sleep(self.settings.wake_delay_s)
+                if generation != self._generation or self.display_estimate != 'assumed_awake':
+                    raise DeliveryBlocked('Display timing invalidated during action')
+                self._send(attempt, 'action', button)
+            self.store.event(attempt, 'action_completed', self.utcnow(), command=command)
             return attempt
         except BaseException as exc:
             self.invalidate_display()

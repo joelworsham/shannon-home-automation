@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from climate_policy import FanState, PolicyConfig, evaluate
 from settings import load_settings
-from device_plan import Observation, PowerCalibration, infer_running, plan_next_command
+from device_plan import Observation, PowerCalibration, infer_running, plan_next_command, command_buttons
 from devices.interfaces import FakeBroadLink, FakeShelly
 
 
@@ -29,7 +29,8 @@ def simulate(*, bedroom_f: float, outdoor_f: float, at: str, watts: float | None
     fake_ir = FakeBroadLink()
     # Simulated command is recorded in memory only. Not a physical command.
     if plan.command is not None:
-        fake_ir.send(plan.command)
+        for button in command_buttons(plan.command):
+            fake_ir.send(button)
     return {
         "desired": asdict(decision.desired),
         "decision_reason": decision.reason,
@@ -51,8 +52,9 @@ def main():
     parser.add_argument('--on-min', type=float, default=8,
                         help='SIMULATION ONLY: example running cutoff (not calibrated)')
     parser.add_argument('--direction', choices=['intake', 'exhaust', 'unknown'], default='unknown')
-    parser.add_argument('--speed', type=int, choices=[1, 2, 3, 4])
+    parser.add_argument('--speed', choices=('low', 'high'))
     args = parser.parse_args()
+    args.speed = {'low': 1, 'high': 4}.get(args.speed)
     direction = None if args.direction == 'unknown' else args.direction
     import json
     print(json.dumps(simulate(bedroom_f=args.bedroom, outdoor_f=args.outside, at=args.at,

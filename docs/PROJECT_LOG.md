@@ -2,7 +2,7 @@
 
 > **Purpose:** Temporary, living record of completed work, open questions, and next steps. Use it for project continuity; do not treat it as a replacement for the code, `README.md`, or `.env.example`. Update after meaningful milestones, then archive or replace with GitHub Issues when appropriate.
 >
-> Last reviewed: **2026-10-20**. Status below reflects repository `main` plus locally reported tests. Statements about hardware are not confirmations until physically verified.
+> Last reviewed: **2026-10-21**. Current status reflects the local low/high refactor; dated entries below are historical. Statements about hardware are not confirmations until physically verified.
 
 ## Durable decisions
 
@@ -25,11 +25,14 @@ Defaults in `.env.example` at this review (actual `.env` may override):
 | Schedule (Indianapolis local time) | 22:00–07:30 |
 | Cooling target / restart | 60°F / 64°F |
 | Minimum outdoor cooling advantage | 5°F |
-| Speeds 2 / 3 / 4 from bedroom temperature | Optional; example preset 62°F / 64°F / 68°F |
+| Running speeds | Low (physical 1) / high (physical 4) |
+| Bedroom threshold for high | Optional; example 68°F (`CLIMATE_HIGH_AT_F`) |
 | Speed hysteresis | 0.5°F |
 | Planned monitoring interval | Five minutes, 24/7 |
 
 Prefer the quietest practical speed. Experimental exhaust-assisted warming should be treated as separate, opt-in functionality rather than assumed to work.
+
+## Historical policy decisions (superseded by low/high control)
 
 **2026-10-19 configuration change:** Repository defaults changed from 58/62°F to 60/64°F (target/restart). Speed thresholds remain 64/68/72°F. Existing machine-local `.env` values are not changed by repository updates; change them explicitly to adopt the new settings.
 
@@ -39,28 +42,18 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 
 **2026-10-19 automated checks:** Added `.github/workflows/tests.yml` to run the complete offline `tests/` suite, dependency installation, and `setup.sh` shell syntax check on each pull request to `main` and each push to `main`. Manual `test_flair.py` / `test_weather.py` probes deliberately stay out of CI to avoid credential or live-device dependency. The expected required check is named **`tests`**. **Enforcement remains a separate GitHub settings task**: require the `tests` check in a `main` ruleset / branch protection, require PRs, and disallow bypass as appropriate. The current GitHub integration cannot edit that repository protection setting. The first pull-request workflow run ([Actions run 39274495353](https://github.com/joelworsham/shannon-home-automation/actions/runs/39274495353)) **passed**, including dependency installation, shell syntax, and offline tests. After merging, verify the first `main` push run as well.
 
-## Work completed / validated to date
+## Current implementation and remaining work
 
-- **Flair API:** OAuth credentials tested locally, Bedroom and Hallway room objects returned, one original Puck found. Bedroom temperature/humidity compared successfully with Puck and Flair mobile app. Hallway temperature has **not** been separately validated as Nest's reading.
-- **Weather:** Open-Meteo API tested against Indianapolis outdoor temperature/humidity/dew point.
-- **Controller:** Configurable cooling/scheduling/four-speed policy and live dry-run execution verified locally. Sample daylight run correctly requested `off` due to schedule; **no real fan commands were sent**.
-- **Persistence:** SQLite recorded actual sensor observations, effective configuration, run and decision history. Later dry-run also recorded a snapshot with **physical state unverified**. An empty diagnostics report under normal conditions is expected.
-- **Safety/testing scaffolding:** Repository includes command planner, mock hardware, state-reconciliation and advisory temperature-diagnostic modules, hardware-fault simulation, and offline tests. Previous development reported **99 passing offline tests**; rerun against current commit when modifying code.
-- **Device adapters:** Local BroadLink and read-only Shelly modules plus opt-in `hardware_probe.py` are in `main`; they have **not** been validated with actual devices.
-- **Setup:** `setup.sh` handles dependencies/tests and offers optional `launchd` installation; repository is synced from development machine. Studio Mac has not been deployed.
+- **Controller:** Configurable schedule, cooling stop/restart, outdoor advantage, and low/high selection. Normal runs and the installed five-minute collection job remain dry-run. Explicit live mode uses guarded delivery.
+- **Speed control:** Only low/high are accepted targets or observations. Endpoint actions send four down/up presses with separate display wake when needed. Starting speed can be unknown. No intermediate-speed policy or relative-step planner remains.
+- **Evidence:** Raw Shelly monitoring and standby/running classification are integrated. Endpoint calibration trials exist; automatic wattage-based low/high classification is not enabled. Speed/direction actions still require physical verification afterward.
+- **Hardware:** Local device connectivity and earlier wake/power/incremental experiments were physically observed as described below. The new four-press endpoint sequences have only offline validation.
+- **Remaining:** Supervised endpoint saturation and direction validation before unattended operation; automatic endpoint classification remains future work. No additional four-speed calibration is required by this design. Ceiling-fan RF compatibility remains unverified.
 
-## Next milestone: physical hardware validation (devices received)
+## Historical hardware development record
 
-**2026-10-20 hardware arrival and connection:** Both devices received, Wi-Fi-provisioned, and reached successfully through their existing local read-only/connection probes. The Shelly's relay was ON; BroadLink local authentication works after disabling **Lock Device** in the BroadLink app. Device IPs remain in the machine-local `.env`, not this log. Next: measure Vornado standby and four-speed wattage, then supervised IR learning and replay. Neither real fan control nor power calibration has been validated; the Shelly must remain powered and must not be used as the Vornado's routine switch.
-
-Do these incrementally, on the home LAN, before enabling real automation:
-
-1. Set up BroadLink RM4 Pro and Shelly Plug US Gen4. Record firmware/host identities locally and check network access using the existing probes.
-2. Verify Shelly relay remains **on**, and calibrate watts for Vornado standby plus each of its four speeds. Record ranges/variance, and evaluate whether speed readings are distinguishable.
-3. Learn and replay the Vornado remote signals. Test power/direction toggle behavior, IR line-of-sight, incremental speeds, reliability, and what happens after interruptions; keep automatic commands disabled initially.
-4. Test the ceiling-fan remote's RF frequency/protocol and BroadLink learning/replay. Similar-looking 433 MHz remotes are only a clue; compatibility is unverified.
-5. Calibrate/adjust safety policy and wire real measurements and commands into the controller **behind an explicit enable gate**, with conservative transitions, confirmation, logging, and failure behavior.
-6. Execute supervised tests at different temperature/operating states, then deploy on the studio Mac mini and enable scheduled collection/operation only after verification.
+Dated observations below describe the implementation and hardware evidence at that time.
+Intermediate-speed measurements are historical experiments, not supported states or current configuration guidance.
 
 ### First physical connectivity probes (2026-10-20)
 
@@ -229,3 +222,32 @@ Do these incrementally, on the home LAN, before enabling real automation:
 - After each milestone, move items between completed/pending, record calibrated facts and dates, and note any changed decisions.
 - Distinguish **reported**, **simulated**, **physically validated**, and **deployed** claims.
 - Keep secrets, private device identifiers, and raw learned remote codes out of this file.
+
+### Runner migration and two-speed pivot (2026-10-21)
+
+- New Mac runner installed with Python 3.13 and the five-minute dry-run LaunchAgent; real Flair/weather collection succeeded. Runtime data/codebook transferred by user.
+- User requested only speeds 1 and 4 as desired states. Disabled speed-2/3 policy thresholds in local configuration and the example; retained the existing local speed-4 temperature threshold. Speeds 2/3 remain possible physical transition states.
+- Endpoint wattage classification still requires fresh calibration; old short ranges are not production bounds. Direction cannot be inferred from watts. Unattended live control is not yet deployed. No offline tests run, per user instruction.
+
+### Fresh endpoint calibration (2026-10-21)
+
+- User physically confirmed settled intake speed 1, then intake speed 4. Recorded 12 read-only Shelly samples per state at three-second intervals on the new runner. Relay ON throughout.
+- Speed 1: **24.90–25.10 W**, mean **25.00 W**. Speed 4: **30.10–30.30 W**, mean **30.24 W**. Raw timestamped samples are in ignored `data/endpoint_calibration/` and SQLite hardware observations.
+- Endpoint sample ranges have a **5.00 W gap** in these runs. This supports the two-speed approach; it does not establish exhaustive long-term bounds or prove direction from wattage. Fresh standby and supervised endpoint transitions remain to verify. No IR or relay commands sent, no offline tests run, and scheduled control remains dry-run.
+
+- Fresh standby calibration: 12 samples at three-second intervals, all **0.00 W**, relay ON throughout. User confirmed fan OFF after a 30-second settling period. Low endpoint classification alone cannot exclude physical speed 2 because historical speed-2 readings overlap speed-1 readings. Saturating endpoint behavior and restored direction must be physically verified before unattended endpoint control.
+
+
+### Low/high endpoint control refactor (2026-10-21)
+
+- Replaced optional speed-2/3/4 tiers with one optional `CLIMATE_HIGH_AT_F` threshold and existing temperature hysteresis. Low/high map to physical 1/4; desired and observed state validation rejects intermediate speeds. CLI flags use `low`/`high` and simulation previous states use `intake-low`/`intake-high`.
+- Planner now requests logical `set_low` / `set_high` actions even when starting speed is unknown. Delivery expands each into four speed-down/up presses, separate from the existing wake, with configured spacing and awake-window checks before each press. Every press is durably journaled; partial/uncertain sequences remain blocked for inspection. Power/direction toggles retain their verification requirements.
+- Preserved existing local calibration work and unrelated setup changes. Replaced local `.env` speed keys with `CLIMATE_HIGH_AT_F`, preserving the configured high threshold. Added no legacy aliases or data migrations; existing local latest desired state is already a supported endpoint/off state.
+- No automatic wattage-based speed classification added: speed/direction still require physical verification after action. Endpoint saturation/idempotence is simulated, not newly physically validated. No live device calls, IR transmissions, scheduling, or enablement changes made.
+- Validation: **152 offline tests passed**, including both endpoints from every physical starting speed, repeated endpoint requests, unknown starting speed, interruption/acknowledgement failure, display expiry/external activity during a sequence, and simulator button expansion. Offline delivery/fault/planning demonstrations, shell syntax, and diff whitespace checks passed.
+
+### Follow-up refactor audit (2026-10-21)
+
+- Audited production Python, CLI/configuration references, examples, and delivery behavior. No intermediate-speed targets or legacy speed-setting readers remain. Updated stale current-status/future-work guidance in this log; dated physical experiments retain their historical labels.
+- Added tests for both endpoint sequences while already awake (exactly four action presses), and durable logging failure between presses (stops before the next transmission and blocks restart). **154 offline tests passed**; production AST/configuration scan, shell syntax, and diff whitespace checks passed.
+- Confidence is in the software behavior under the modeled hardware contract. Real four-press saturation/timing and automatic wattage-based speed confirmation remain unvalidated/not enabled, respectively. No live hardware interactions performed.

@@ -35,7 +35,10 @@ Delivery requires exclusive control: nobody uses the app or original remote
 during a sequence. On a new session, expired estimate, or invalidation, it
 waits a full display timeout plus timing margin, rereads physical evidence,
 sends the captured `speed_up` as a wake, waits one second, rereads evidence,
-and sends at most one planned action. The short speed-up capture demonstrated
+and sends at most one planned action. A low/high action sends four
+`speed_down`/`speed_up` presses with the same one-second spacing, refreshing
+the awake estimate conservatively from each send start. The wake press is separate.
+The short speed-up capture demonstrated
 wake-only behavior; an arbitrary command is not assumed harmless. Timing
 settings reflect tested behavior plus user reports, not hardware guarantees.
 
@@ -48,8 +51,9 @@ our command log. After a restart, awake estimates are never reused.
 
 `execute(desired, observe, exclusive_control=True)` accepts the existing
 `FanState` and a callback returning fresh `PowerObservation` evidence. It
-uses the existing reconciler, so unknown power, speed, or direction blocks
-commands that need them. The callback owns power calibration and settling;
+uses the reconciler: unknown power or direction blocks commands that need
+them. Unknown speed can be replaced with a low/high endpoint sequence.
+The callback owns power calibration and settling;
 this API does not classify speed from watts or assume a successful IR send
 changed anything. Physical observations must be quick enough for the awake
 window. Do not fabricate timestamps or repeat old speed/direction guesses.
@@ -92,14 +96,14 @@ This documentation does not change your local settings.
 ```
 
 The policy still honors schedule, outdoor advantage, temperature hysteresis,
-and optional speed tiers. This is not an arbitrary command-replay CLI. It can
+and low/high speed selection. This is not an arbitrary command-replay CLI. It can
 start/stop based on verified power; a running fan needs independently verified
-direction/speed before the planner can adjust those attributes. Supply current
+direction before the planner can adjust speed. Starting speed may be unknown. Supply current
 physical observations only when you actually inspected them, for example:
 
 ```bash
 # Example observations only: replace with the actual state you just inspected.
-.venv/bin/python controller.py --live --exclusive-control --verified-direction intake --verified-speed 2
+.venv/bin/python controller.py --live --exclusive-control --verified-direction intake --verified-speed low
 ```
 
 These observations expire after 30 seconds by default and are invalidated
@@ -122,7 +126,7 @@ Review durable attempts and resolve a specific attempt after inspection:
 ```bash
 .venv/bin/python history.py --decisions 0 --deliveries 10
 # Copy the actual attempt ID. This recovery command reads Shelly but never sends IR.
-.venv/bin/python hardware_runtime.py --resolve-attempt ATTEMPT_ID --note "Inspected fan; display shows speed 2" --verified-speed 2
+.venv/bin/python hardware_runtime.py --resolve-attempt ATTEMPT_ID --note "Inspected fan; display shows low" --verified-speed low
 ```
 
 Recovery requires explicit configured power thresholds and fresh consistent
@@ -158,56 +162,40 @@ are included in the ZIP. Existing SQLite tables/rows are migrated in place.
 ## `.env` climate controls
 
 On update, `setup.sh` will append missing required `CLIMATE_*` defaults
-but **not** absent optional speed thresholds to your existing `.env`. It never
+but **not** an absent optional high-speed threshold to your existing `.env`. It never
 changes your credential values or user-entered settings.
 Editing those non-secret values on your Mac is all you need to change policy.
 Every scheduled invocation reloads `.env` settings. **OS environment values
 have precedence** over `.env`.
 
 The fully commented, authoritative template is in [`.env.example`](.env.example).
-It follows the project's convention: each explanation appears **above** its
-variable. The supplied `.env.example` profile has target **60°F**, restart
-**64°F**, speed 2/3/4 thresholds at **62/64/68°F**, 5°F outdoor advantage,
-and 22:00–07:30 Indianapolis time.
+It supplies a 60°F stop target, 64°F restart, 5°F outdoor advantage, and a
+22:00–07:30 Indianapolis schedule. All temperatures are Fahrenheit.
 
+The fan has only two supported running states: **low** (physical speed 1) and
+**high** (physical speed 4). Speeds 2 and 3 are neither policy targets nor
+accepted observations. Physical transitions can pass through them.
 
-The target is when the fan should stop cooling. Cooling restarts when the
-bedroom reaches the restart threshold (if outside air is sufficiently cooler).
-Between those thresholds, the previous *desired* state determines whether
-cooling continues. Speed 1 is the fallback; each of speeds 2–4 is optional.
-Leave its `.env` value empty or remove its line to disable that tier. The
-policy skips disabled tiers when changing speed and still honors hysteresis.
-All temperatures are Fahrenheit. Scheduling
-handles overnight windows and Indianapolis daylight saving time. Invalid
-settings fail safely and get logged, rather than issuing hardware commands.
+`CLIMATE_HIGH_AT_F=68` selects high when starting cooling at or above 68°F.
+While cooling, `CLIMATE_SPEED_HYSTERESIS_F=0.5` switches low → high at 68.5°F
+and high → low below 67.5°F. Blank or absent `CLIMATE_HIGH_AT_F` means always
+low. Set it to the cooling target to use high whenever cooling is active.
+The stop/restart thresholds and outdoor-air requirement always apply.
 
-### Optional fan-speed profiles
+Low/high requests use endpoint actions rather than relative adjustments:
+`set_low` sends four speed-down presses; `set_high` sends four speed-up presses.
+Starting speed is unnecessary. A separately verified matching endpoint skips
+the sequence. The wake press is additional, and each action press is spaced
+and journaled individually. An interrupted sequence remains unresolved for
+inspection. Acknowledged delivery does not prove reception, so speed actions
+still require physical verification afterward; automatic endpoint wattage
+classification is not enabled by this refactor. The four-press endpoint
+behavior is covered by simulations and has not been exercised live here.
 
-The following are alternative settings for your machine-local `.env`:
-
-```dotenv
-# Four-speed profile (the supplied .env.example)
-CLIMATE_SPEED_2_AT_F=62
-CLIMATE_SPEED_3_AT_F=64
-CLIMATE_SPEED_4_AT_F=68
-```
-
-```dotenv
-# Full speed whenever cooling, until the 60°F cooling target is reached
-CLIMATE_SPEED_2_AT_F=
-CLIMATE_SPEED_3_AT_F=
-CLIMATE_SPEED_4_AT_F=60
-```
-
-Any subset of speeds 2–4 may be enabled, such as only speed 3.
-A missing threshold is disabled, including after running `setup.sh`.
-Speed 1 requires no setting and is the fallback only when higher configured
-speeds do not qualify. In the full-speed example, speed 4 qualifies at every
-temperature above the cooling target, so speed 1 is never requested.
-Enabled thresholds must increase in temperature as speed increases.
-The 60°F stop / 64°F restart and outdoor-air requirement still apply.
-On restart the policy selects the highest qualifying speed; once cooling,
-it changes one *enabled* tier per evaluation with hysteresis.
+CLI observations use `--verified-speed low` or `--verified-speed high`; simulated
+previous states use `--previous intake-low` or `--previous intake-high`.
+Internal speed values and SQLite snapshots retain physical endpoint numbers
+1/4 (0 for off). There are no legacy setting aliases or conversion migrations.
 
 ## New: state reconciliation and diagnostics (offline)
 
@@ -280,8 +268,8 @@ network calls, live devices, or SQLite writes in the hardware simulator.
 # Example: fan consumes simulated standby wattage, so plan power-on toggle
 .venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 1
 
-# Example: running on speed 1, desired speed 3; plan ONE speed-up command toward it
-.venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 11 --direction intake --speed 1
+# Example: running high, desired low; plan four speed-down presses
+.venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40 --watts 30 --direction intake --speed high
 
 # Example: no power measurement; refuse unsafe toggle
 .venv/bin/python simulate_hardware.py --at 23:00 --bedroom 66 --outside 40
@@ -298,11 +286,10 @@ network calls, live devices, or SQLite writes in the hardware simulator.
   the Vornado's power outlet is included.
 - The Vornado's Power and Direction buttons are **toggles**; IR success is
   not confirmed just because a signal was sent. Do not retry blindly.
-- Power metering cannot prove direction or speed. Unknown direction/speed
-  blocks incremental commands until a separate calibration procedure exists.
-- The planner proposes **one command per observation**. A future runtime
-  must capture the new state (or establish a safe recovery method) before
-  deciding what to transmit next.
+- Power metering cannot prove direction; speed classification is not enabled.
+  Unknown direction blocks speed changes. Unknown speed allows an endpoint action.
+- The planner proposes **one logical action per observation** (four presses for speed).
+  The live runtime requires confirmation or manual recovery before another action.
 - The simulator's cooling policy honors your `.env` values; the displayed
   `fake_commands` list is **not transmitted** anywhere.
 - Ceiling-fan RF compatibility with BroadLink remains unconfirmed; the
@@ -461,6 +448,11 @@ are not yet connected to real fan behavior. Experimental exhaust-assisted warmin
 ./setup.sh --uninstall-launchd
 ```
 
+`COLLECTOR_INTERVAL_SECONDS` in `.env` sets the background collection interval
+in seconds (default `300`). Use a positive whole number. After changing it, run
+`./setup.sh --install-launchd` to reload the macOS schedule. Other `.env`
+settings are read on each run.
+
 The Mac must remain **awake**, although the screen may sleep. This user
 LaunchAgent runs while a user session is signed in. It is never enabled by
 setup unless you explicitly request `--install-launchd`.
@@ -485,12 +477,12 @@ git push
 - `check_cooling.py`: Flair + Open-Meteo data acquisition
 - `database.py`: schema migration and comprehensive event/decision history
 - `history.py`: read-only SQLite reports
-- `device_plan.py`: safe, single-command power/speed/direction planning
+- `device_plan.py`: safe power/direction and low/high endpoint planning
 - `devices/interfaces.py`: fake BroadLink and read-only fake Shelly interfaces
 - `devices/broadlink_local.py`: local BroadLink connection, guarded send and codebook
 - `devices/shelly_local.py`: read-only Shelly status/wattage
 - `hardware_probe.py`: opt-in connectivity probes, SQLite status logging
-- `simulate_hardware.py`: one-step offline IR/wattage planner
+- `simulate_hardware.py`: offline endpoint IR/wattage planner
 - `safety_state.py`: never-retry-unconfirmed-toggle, fresh-observation state machine
 - `temperature_diagnostics.py`: advisory, conservative temperature-trend rules
 - `simulate_faults.py`: multiple deterministic scenarios, disposable SQLite history

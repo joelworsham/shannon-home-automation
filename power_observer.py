@@ -47,7 +47,7 @@ class SettledPowerObserver:
                 raise
             at = self.clock()
             state = infer_running(status.watts, self.settings.calibration) if status.relay_on else None
-            self.samples.append((at, measured, state))
+            self.samples.append((at, measured, state, status.watts))
             # Retain one sample at/before the window boundary plus newer samples.
             while len(self.samples) > 1 and self.samples[1][0] <= at - self.settings.window_s:
                 self.samples.pop(0)

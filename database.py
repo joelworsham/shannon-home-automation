@@ -396,7 +396,7 @@ def finish_hardware_run(run_id: int, outcome: dict, *, failed=False):
                          (sent, _json(context), row_id))
         if not failed:
             conn.execute('UPDATE controller_runs SET status=?,stage=?,finished_at_utc=? WHERE id=?',
-                ('success' if outcome['status'] in ('satisfied', 'power_confirmed') else 'blocked',
+                ('success' if outcome['status'] in ('satisfied', 'power_confirmed', 'endpoint_consistent') else 'blocked',
                  'hardware_' + outcome['status'], _utc(), run_id))
 
 

@@ -24,6 +24,7 @@ No option           Install/update local Python venv and dependencies
 --run-once          Set up if needed and run controller.py once (dry-run)
 --test              Run offline regression tests
 --install-launchd   Set up and install an every-5-minutes LaunchAgent (macOS)
+--install-launchd-live Install commissioned unattended control at the configured interval
 --status            Show LaunchAgent status (macOS)
 --uninstall-launchd Stop/remove LaunchAgent (keeps .env and database)
 --help              Show this help
@@ -124,6 +125,18 @@ install_launchd() {
     fi
     install_deps
     check_env
+    if [[ "${1:-dry-run}" == "unattended" ]]; then
+        "$VENV_PYTHON" - <<'PYREADY'
+import os
+from settings import load_delivery_settings
+from unattended import load_commissioning, COMMISSION_FAULT_FILE
+if not load_delivery_settings().enabled or os.getenv('UNATTENDED_CONTROL_ENABLED', 'false').lower() != 'true':
+    raise SystemExit('Enable hardware and unattended control explicitly before installing live scheduling.')
+load_commissioning()
+if COMMISSION_FAULT_FILE.exists():
+    raise SystemExit('Commissioning fault requires inspection and recommissioning before live scheduling.')
+PYREADY
+    fi
     INTERVAL_SECONDS="$("$VENV_PYTHON" - <<'PYINTERVAL'
 from dotenv import dotenv_values
 value = dotenv_values('.env').get('COLLECTOR_INTERVAL_SECONDS', '300')
@@ -135,7 +148,7 @@ PYINTERVAL
     mkdir -p "$(dirname "$LAUNCHD_PLIST")" "$PROJECT_DIR/logs"
 
     # plistlib properly escapes macOS paths, even if the path contains spaces.
-    "$VENV_PYTHON" - "$LAUNCHD_PLIST" "$LAUNCHD_LABEL" "$PROJECT_DIR" "$INTERVAL_SECONDS" <<'PY'
+    "$VENV_PYTHON" - "$LAUNCHD_PLIST" "$LAUNCHD_LABEL" "$PROJECT_DIR" "$INTERVAL_SECONDS" "${1:-dry-run}" <<'PY'
 import plistlib
 import sys
 from pathlib import Path
@@ -154,6 +167,8 @@ plist = {
     'StandardErrorPath': str(project / 'logs/collector.stderr.log'),
     'EnvironmentVariables': {'PYTHONUNBUFFERED': '1'},
 }
+if sys.argv[5] == 'unattended':
+    plist['ProgramArguments'].append('--unattended')
 with plist_path.open('wb') as f:
     plistlib.dump(plist, f)
 PY
@@ -165,7 +180,11 @@ PY
     echo "View stdout: tail -f '$PROJECT_DIR/logs/collector.stdout.log'"
     echo "View errors: tail -f '$PROJECT_DIR/logs/collector.stderr.log'"
     echo "Note: LaunchAgents require a logged-in user session; the Mac itself must stay awake."
-    echo "Current controller is DRY RUN: it logs readings/decisions, not IR commands."
+    if [[ "${1:-dry-run}" == "unattended" ]]; then
+        echo "Commissioned unattended control is LIVE. Pause before using the remote/app."
+    else
+        echo "Current controller is DRY RUN: it logs readings/decisions, not IR commands."
+    fi
 }
 
 status_launchd() {
@@ -203,6 +222,7 @@ case "${1:-}" in
         "$VENV_PYTHON" -m unittest discover -s tests -v
         ;;
     --install-launchd) install_launchd ;;
+    --install-launchd-live) install_launchd unattended ;;
     --status) status_launchd ;;
     --uninstall-launchd) uninstall_launchd ;;
     --help|-h) usage ;;

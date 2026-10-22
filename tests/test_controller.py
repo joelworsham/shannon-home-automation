@@ -59,6 +59,27 @@ class ControllerTests(unittest.TestCase):
             controller.main()
         live.assert_not_called()
 
+    def test_unattended_mode_routes_to_commissioned_runtime_and_records_success(self):
+        with patch('sys.argv', ['controller.py', '--unattended']), \
+             patch.object(controller, 'load_delivery_settings', return_value=DeliverySettings(enabled=True)), \
+             patch('unattended.run_unattended', return_value={
+                 'status': 'endpoint_consistent', 'note': 'Synthetic commissioned model'}) as run, \
+             patch.object(controller, 'run_live') as manual:
+            controller.main()
+        run.assert_called_once()
+        manual.assert_not_called()
+        with database.connect() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM controller_runs').fetchone()[0], 'success')
+            self.assertEqual(conn.execute('SELECT source FROM device_state_snapshots').fetchone()[0], 'live_control')
+
+    def test_unattended_cannot_mix_simulation_or_manual_observations(self):
+        for flags in (['--at', '23:00'], ['--live'], ['--exclusive-control'],
+                      ['--verified-speed', 'low'], ['--verified-direction', 'intake']):
+            with self.subTest(flags=flags), patch('sys.argv', ['controller.py', '--unattended'] + flags), \
+                 patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit):
+                controller.main()
+        self.assertFalse(self.db_path.exists())
+
     def test_live_requires_enable_and_exclusive_flags(self):
         for argv in (['controller.py', '--live'], ['controller.py', '--live', '--exclusive-control'],
                      ['controller.py', '--live', '--exclusive-control', '--at', '23:00']):

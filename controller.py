@@ -45,10 +45,13 @@ def main() -> None:
     parser.add_argument("--previous", choices=("off", "intake-low", "intake-high"),
                         help="Override previous desired state (only with --at)")
     parser.add_argument('--live', action='store_true', help='One guarded hardware evaluation; also requires env enable')
+    parser.add_argument('--unattended', action='store_true', help='Commissioned exclusive intake model; separate env opt-in required')
     parser.add_argument('--exclusive-control', action='store_true', help='Confirm no app/original-remote use during delivery')
     parser.add_argument('--verified-speed', choices=('low', 'high'), help='Physically verified NOW, never a desired value')
     parser.add_argument('--verified-direction', choices=('intake', 'exhaust'), help='Physically verified NOW')
     args = parser.parse_args()
+    if args.unattended and (args.live or args.at or args.exclusive_control or args.verified_speed or args.verified_direction):
+        parser.error('--unattended cannot be combined with live/simulation/manual-observation flags')
     args.verified_speed = {'low': 1, 'high': 4}.get(args.verified_speed)
     if args.previous and not args.at:
         parser.error("--previous requires --at")
@@ -57,7 +60,7 @@ def main() -> None:
     if not args.live and (args.exclusive_control or args.verified_speed is not None or args.verified_direction):
         parser.error('Hardware observation flags require --live')
     delivery_settings = None
-    if args.live:
+    if args.live or args.unattended:
         delivery_settings = load_delivery_settings()
         if not delivery_settings.enabled:
             parser.error('Set HARDWARE_CONTROL_ENABLED=true explicitly before --live')
@@ -104,20 +107,24 @@ def main() -> None:
         stage = "save_evaluation"
         save_evaluation(run_id=run_id, config_snapshot_id=snapshot_id,
                         bedroom=bedroom, outdoor=outdoor, previous=previous,
-                        decision=decision, settings=config, live=args.live)
-        if args.live:
+                        decision=decision, settings=config, live=args.live or args.unattended)
+        if args.live or args.unattended:
             stage = 'hardware_control'
             update_stage(run_id, stage)
             try:
-                hardware = run_live(decision.desired, delivery_settings, run_id=run_id,
-                    exclusive_control=args.exclusive_control, speed=args.verified_speed,
-                    direction=args.verified_direction)
+                if args.unattended:
+                    from unattended import run_unattended
+                    hardware = run_unattended(decision.desired, delivery_settings, run_id=run_id)
+                else:
+                    hardware = run_live(decision.desired, delivery_settings, run_id=run_id,
+                        exclusive_control=args.exclusive_control, speed=args.verified_speed,
+                        direction=args.verified_direction)
             except Exception:
                 finish_hardware_run(run_id, {'status': 'error', 'note': 'Hardware stage failed; inspect delivery journal'}, failed=True)
                 raise
             finish_hardware_run(run_id, hardware)
     except Exception as exc:
-        mark_failed(run_id, stage, exc, live=args.live)
+        mark_failed(run_id, stage, exc, live=args.live or args.unattended)
         raise
     _print_result(now, bedroom, outdoor, previous, decision, config, True, hardware)
 

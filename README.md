@@ -29,7 +29,7 @@ new settings in `.env.example`; callers must pass those settings to
 `WakeAwareDelivery`. Setting `HARDWARE_CONTROL_ENABLED=true` alone **does not
 enable the controller**, install scheduling, or send anything. Real delivery
 also requires a BroadLink adapter constructed with `permit_transmit=True`.
-The live CLI is described below; no unattended live loop is installed.
+The manual live CLI and separately commissioned unattended mode are described below.
 
 Delivery requires exclusive control: nobody uses the app or original remote
 during a sequence. On a new session, expired estimate, or invalidation, it
@@ -75,9 +75,10 @@ attempt unresolved. BroadLink IR delivery now uses a single UDP send: a lost
 acknowledgement never triggers a transport retry. A captured packet can still
 contain repeated IR frames; one UDP send does not prove one physical action.
 
-The new transport and delivery layer have offline regression coverage. They
-have **not been exercised against hardware since implementation**; the earlier
-physical diagnostics used ad hoc scripts. Deployment remains separate work.
+The transport and delivery layer have offline regression coverage. On October 21,
+supervised integrated startup and both four-press endpoint sequences succeeded
+on this Mac; the user confirmed intake and the displayed endpoints. See the
+project log for the distinction between physical evidence and modeled state.
 
 ## One guarded live evaluation
 
@@ -142,6 +143,56 @@ fan responded. Physical confirmations and uncertain outcomes are recorded
 separately. Legacy dry-run history stays intact.
 
 `--live` cannot be combined with `--at`. No flags still means dry-run.
+
+## Commissioned unattended intake control
+
+`controller.py --unattended` is a separate, explicit mode for a fan reserved
+exclusively for automation. It requires `HARDWARE_CONTROL_ENABLED=true`,
+`UNATTENDED_CONTROL_ENABLED=true`, and local commissioning in
+`data/fan_commissioning.json`. The normal `--live` path retains manual
+speed/direction verification; it does not inherit the commissioned assumptions.
+
+Commissioning records the operator's intake-only contract and a physically
+verified initial endpoint. The system cannot sense direction, discover all
+manual remote activity, or guarantee direction survives a fan power outage.
+Pause automation before manual use or disconnecting/replacing devices, then
+inspect intake and recommission before resuming. A change to hardware hosts,
+the codebook, or power-observation settings invalidates commissioning.
+
+For later speed changes, a modeled endpoint requires all four intended action
+presses acknowledged, a complete durable sequence, and a settled window whose
+every power sample agrees with that endpoint's calibrated band. This is
+**command/model evidence with a power consistency check**, not direct physical
+speed verification: a missed press ending at an intermediate speed with
+overlapping watts can escape this check. Watts alone never select a speed.
+SQLite physical `verified_speed`/`verified_direction` columns stay empty for
+modeled state; separate model records explain its basis.
+
+After a power action, restored speed is unknown and a later invocation establishes
+the requested endpoint. At most one policy action occurs per invocation.
+Incomplete/uncertain delivery and pending endpoint attempts after a restart
+require manual inspection, never automatic retry. An endpoint-model mismatch
+latches `data/fan_commissioning_fault.json` until inspection/recommissioning;
+verified power-off remains possible when the policy requests off, unless a
+delivery is unresolved. Existing manual recovery is still available.
+
+Commission only after physically verifying intake, low/high endpoint behavior,
+power restoration behavior, and settled per-installation calibration. Example
+command shape (supply your measured bands; these numbers are not universal):
+
+```bash
+.venv/bin/python unattended.py --exclusive-control --verified-direction intake \
+  --verified-speed high --low-band LOW_MIN_W LOW_MAX_W --high-band HIGH_MIN_W HIGH_MAX_W
+# Set both opt-ins in .env, then install the live schedule:
+./setup.sh --install-launchd-live
+```
+
+To pause fan control while retaining collection, run `./setup.sh --install-launchd`.
+To stop the job entirely, run `./setup.sh --uninstall-launchd`. Before resuming
+after manual use, physically establish intake at a supported endpoint, rerun
+commissioning with that actual endpoint, then reinstall with `--install-launchd-live`.
+Preserve `.env`, `data/` (including SQLite, codebook, and commissioning), and logs
+when updating the source.
 
 ## Full-release upgrade
 
@@ -440,22 +491,45 @@ Power calibration, fresh physical evidence, and exclusive control are required
 before live use. The advisory diagnostics exist in the simulated engine but
 are not yet connected to real fan behavior. Experimental exhaust-assisted warming remains future work.
 
-## Optional launchd on the studio Mac mini (later)
+## Persistent macOS server
+
+This Mac is the persistent server. Keep the project in its installed folder;
+the LaunchAgent uses absolute paths. If you move the project, rerun the installer
+from the new folder to update the interpreter, working directory, and log paths.
 
 ```bash
-./setup.sh --install-launchd   # Every five minutes, all day
+./setup.sh --install-launchd        # Dry-run collection at the configured interval
+./setup.sh --install-launchd-live   # Commissioned live control at the same interval
 ./setup.sh --status
 ./setup.sh --uninstall-launchd
 ```
 
 `COLLECTOR_INTERVAL_SECONDS` in `.env` sets the background collection interval
 in seconds (default `300`). Use a positive whole number. After changing it, run
-`./setup.sh --install-launchd` to reload the macOS schedule. Other `.env`
+the appropriate install command above to reload the macOS schedule. Other `.env`
 settings are read on each run.
 
 The Mac must remain **awake**, although the screen may sleep. This user
 LaunchAgent runs while a user session is signed in. It is never enabled by
-setup unless you explicitly request `--install-launchd`.
+setup unless you explicitly request one of the launchd installation options.
+
+After a reboot, sign in to start collection again. Locking the screen is fine;
+logging out stops this user service. Check system sleep with `pmset -g custom`
+(AC power `sleep 0` keeps this desktop awake).
+
+`--status` normally reports `state = not running` between invocations. Check
+`last exit code = 0`, the current project paths, and advancing run timestamps
+in SQLite or `logs/collector.stdout.log`. Errors appear in
+`logs/collector.stderr.log`. The collector runs all day; the climate operating
+window in `.env` determines when cooling is requested. The installed arguments
+in `--status` show whether the job runs collection only or includes `--unattended`.
+Hardware enablement alone never changes a dry-run job into live control.
+
+On macOS, Python also needs **Privacy & Security → Local Network** access for
+Shelly/BroadLink. A background `No route to host` while an interactive probe
+works can indicate this permission is missing. Enable Python there, then retry
+the installed job with `launchctl kickstart gui/$(id -u)/local.shannon.bedroom-climate.collector`.
+No Full Disk Access is required for this setup.
 
 ## Git workflow
 
@@ -470,6 +544,7 @@ git push
 
 - `controller.py`: dry-run default, explicit one-action live mode
 - `hardware_runtime.py`: hardware integration and no-transmission manual recovery
+- `unattended.py`: commissioned exclusive intake contract and endpoint model
 - `power_observer.py`: settled power windows and expiring manual observations
 - `wake_delivery.py` / `delivery_store.py`: wake timing and durable delivery barriers
 - `settings.py`: validates `.env` climate settings

@@ -210,6 +210,13 @@ chmod +x setup.sh
 `.env`, `.venv/`, `data/`, `logs/`, or `.git/`. Neither secrets nor runtime data
 are included in the ZIP. Existing SQLite tables/rows are migrated in place.
 
+## Planned extensions
+
+See [the feature tracker](docs/FEATURE_TRACKER.md) for the scope, proposed behavior,
+implementation order, and acceptance checks for sleep/daytime presets, temperature
+and OFF holds, manual pause/resume, and a private Android remote. These extensions
+are scoped only; they are not implemented or enabled.
+
 ## `.env` climate controls
 
 On update, `setup.sh` will append missing required `CLIMATE_*` defaults

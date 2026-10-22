@@ -44,11 +44,11 @@ Prefer the quietest practical speed. Experimental exhaust-assisted warming shoul
 
 ## Current implementation and remaining work
 
-- **Controller:** Configurable schedule, cooling stop/restart, outdoor advantage, and low/high selection. Normal runs and the installed five-minute collection job remain dry-run. Explicit live mode uses guarded delivery.
+- **Controller:** Configurable single schedule, cooling stop/restart, outdoor advantage, and low/high selection. Normal invocations remain dry-run; the installed five-minute LaunchAgent uses commissioned `--unattended` live control.
 - **Speed control:** Only low/high are accepted targets or observations. Endpoint actions send four down/up presses with separate display wake when needed. Starting speed can be unknown. No intermediate-speed policy or relative-step planner remains.
-- **Evidence:** Raw Shelly monitoring and standby/running classification are integrated. Endpoint calibration trials exist; automatic wattage-based low/high classification is not enabled. Speed/direction actions still require physical verification afterward.
-- **Hardware:** Local device connectivity and earlier wake/power/incremental experiments were physically observed as described below. The new four-press endpoint sequences have only offline validation.
-- **Remaining:** Supervised endpoint saturation and direction validation before unattended operation; automatic endpoint classification remains future work. No additional four-speed calibration is required by this design. Ceiling-fan RF compatibility remains unverified.
+- **Evidence:** Raw Shelly monitoring and standby/running classification are integrated. Commissioned unattended control uses completed endpoint sequences plus settled power agreement as a model, not direct speed/direction sensing. The manual live path retains physical verification requirements.
+- **Hardware:** Four-press low/high sequences and intake were physically confirmed during commissioning, and an unattended low sequence passed its power-consistency check. See the dated deployment record below for limits and evidence.
+- **Remaining:** Multi-preset schedules, holds, safe manual pause/resume, and a private Android remote are scoped in [FEATURE_TRACKER.md](FEATURE_TRACKER.md), not implemented. General wattage-based speed classification and ceiling-fan RF compatibility remain unverified.
 
 ## Historical hardware development record
 
@@ -268,3 +268,10 @@ Intermediate-speed measurements are historical experiments, not supported states
 - Enabled the separate local unattended opt-in and installed `controller.py --unattended` every **300 seconds**. Preserved the actual **20:30–07:30 Indianapolis** window, **58°F stop / 62°F restart**, outdoor advantage, and high threshold. No credentials, packets, runtime data, or machine commissioning are committed.
 - First live LaunchAgent invocation failed local Shelly access without sending IR. Python Local Network permission was subsequently shown enabled in System Settings. Retried the actual LaunchAgent: it successfully fetched climate inputs, requested OFF outside the window, delivered guarded power-off, and confirmed settled standby. Run 10 finished successfully at **20:18 Indianapolis time**, launchd last exit code **0**, no unresolved delivery. Historical failure logs remain intact.
 - Validation: **167 offline tests passed**, covering commissioned-model transitions, process restart/pending behavior, missed commands, lost acknowledgements, whole-window checks, model/physical history separation, opt-in/configuration checks, CLI routing, and incompatible flags. Dependency consistency, shell syntax, and diff whitespace checks passed.
+
+### Schedule, hold, and Android extension scope (2026-10-21)
+
+- User requested a scope and durable tracker for sleep/all-other-times presets, timed temperature/OFF holds, indefinite automation pause, and a personal sideloaded Android app sending commands to this Mac. User selected **scope and tracker only** for this pass.
+- Added `docs/FEATURE_TRACKER.md` with feature IDs/status, proposed semantics, implementation sequence, API/worker outline, acceptance checks, and unresolved product choices. Linked it from the README and corrected superseded current-status bullets above using the existing commissioning record.
+- Main architectural finding: preserve the policy/delivery separation and introduce durable control intent shared by local CLI, API, and app. Pause must coordinate with in-flight delivery; manual remote use invalidates the current exclusive-intake contract and needs a deliberate resume path. The five-minute LaunchAgent also needs coordinated command wakeups for responsive phone control.
+- All features remain scoped, not implemented. Final changes are documentation only; local `.env`, runtime data, commissioning, and LaunchAgent configuration were not changed. No live device calls or transmissions were made. Offline tests were not rerun for documentation-only changes.

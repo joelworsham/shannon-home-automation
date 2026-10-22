@@ -153,28 +153,43 @@ exclusively for automation. It requires `HARDWARE_CONTROL_ENABLED=true`,
 speed/direction verification; it does not inherit the commissioned assumptions.
 
 Commissioning records the operator's intake-only contract and a physically
-verified initial endpoint. The system cannot sense direction, discover all
-manual remote activity, or guarantee direction survives a fan power outage.
-Pause automation before manual use or disconnecting/replacing devices, then
-inspect intake and recommission before resuming. A change to hardware hosts,
-the codebook, or power-observation settings invalidates commissioning.
+verified initial endpoint. Remote power/speed changes between evaluations are
+allowed: the next evaluation checks settled wattage against the requested
+low/high band. If power and estimated speed already match, it sends no commands.
+If running power does not match the requested speed, it sends four endpoint
+button presses and checks again afterward. Intermediate speeds with overlapping
+wattage can be mistaken for an endpoint; this ambiguity is accepted to avoid
+unnecessary transmissions. Avoid using
+the remote during a delivery sequence; display wake timing needs exclusive
+control for that interval. Direction is still assumed intake and cannot be sensed
+or restored from watts. Inspect intake after a direction change or power outage;
+hardware hosts, codebook, or power-observation setting changes still require
+recommissioning.
 
-For later speed changes, a modeled endpoint requires all four intended action
-presses acknowledged, a complete durable sequence, and a settled window whose
-every power sample agrees with that endpoint's calibrated band. This is
-**command/model evidence with a power consistency check**, not direct physical
-speed verification: a missed press ending at an intermediate speed with
-overlapping watts can escape this check. Watts alone never select a speed.
-SQLite physical `verified_speed`/`verified_direction` columns stay empty for
-modeled state; separate model records explain its basis.
+Current speed is estimated from the calibrated endpoint power bands, independently
+of the previous command history. After a speed command, confirmation also requires
+all four action presses acknowledged and a complete durable sequence. The power
+check uses the median
+of at least three samples over the configured window and pads the calibrated
+bands by up to 1 W on each side (capped at one third of the gap between bands,
+so they remain separate). With this installation's 22.5–26 W / 29–32 W bands,
+the effective checks are 21.5–27 W / 28–33 W. This tolerates ordinary drift and
+a brief spike. Standby/running detection retains its separate calibrated
+thresholds and whole-window agreement; uncertain power never permits a toggle.
+This is a **wattage-based speed estimate**, not direct physical speed verification. SQLite physical `verified_speed`/`verified_direction`
+columns stay empty for modeled state; separate model records explain its basis.
 
-After a power action, restored speed is unknown and a later invocation establishes
-the requested endpoint. At most one policy action occurs per invocation.
-Incomplete/uncertain delivery and pending endpoint attempts after a restart
-require manual inspection, never automatic retry. An endpoint-model mismatch
-latches `data/fan_commissioning_fault.json` until inspection/recommissioning;
-verified power-off remains possible when the policy requests off, unless a
-delivery is unresolved. Existing manual recovery is still available.
+After a confirmed power-on, speed is checked again; an endpoint command follows
+in the same evaluation only if wattage does not already match the requested speed. Each evaluation performs at most those two actions; a failed or
+uncertain action stops that evaluation. On the next evaluation, incomplete
+power/endpoint attempts (including interrupted sequences after a restart) are
+retired using fresh settled power, then the controller replans from actual
+ON/OFF state and reasserts the endpoint as needed. It never blindly replays a
+power toggle. Persistent failures retry once per scheduled evaluation without
+latching a commissioning fault. Legacy `data/fan_commissioning_fault.json`
+speed-mismatch files no longer block unattended control. Unknown power or an
+unresolved direction action still blocks commands. The normal `--live` path
+retains its existing manual recovery rules.
 
 Commission only after physically verifying intake, low/high endpoint behavior,
 power restoration behavior, and settled per-installation calibration. Example
@@ -344,7 +359,7 @@ network calls, live devices, or SQLite writes in the hardware simulator.
   the Vornado's power outlet is included.
 - The Vornado's Power and Direction buttons are **toggles**; IR success is
   not confirmed just because a signal was sent. Do not retry blindly.
-- Power metering cannot prove direction; speed classification is not enabled.
+- Power metering cannot prove direction; commissioned unattended mode estimates low/high from calibrated bands. The manual live path still requires physical speed verification.
   Unknown direction blocks speed changes. Unknown speed allows an endpoint action.
 - The planner proposes **one logical action per observation** (four presses for speed).
   The live runtime requires confirmation or manual recovery before another action.

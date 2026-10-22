@@ -129,12 +129,10 @@ install_launchd() {
         "$VENV_PYTHON" - <<'PYREADY'
 import os
 from settings import load_delivery_settings
-from unattended import load_commissioning, COMMISSION_FAULT_FILE
+from unattended import load_commissioning
 if not load_delivery_settings().enabled or os.getenv('UNATTENDED_CONTROL_ENABLED', 'false').lower() != 'true':
     raise SystemExit('Enable hardware and unattended control explicitly before installing live scheduling.')
 load_commissioning()
-if COMMISSION_FAULT_FILE.exists():
-    raise SystemExit('Commissioning fault requires inspection and recommissioning before live scheduling.')
 PYREADY
     fi
     INTERVAL_SECONDS="$("$VENV_PYTHON" - <<'PYINTERVAL'

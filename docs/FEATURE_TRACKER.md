@@ -50,7 +50,7 @@ Persist enabled/paused state separately from an optional active hold. Recommende
 - Pause: issue no hardware commands, including OFF. Continue status/history collection where possible. Pause takes precedence over a hold and cancels it, so resuming cannot unexpectedly restore an old hold.
 - New hold: replace the previous hold atomically. Reject while paused until automation is explicitly resumed.
 - Cancel/expiry: return to the schedule active now, never a stored pre-hold preset. Store expiry as an absolute UTC timestamp; it survives process/Mac restarts and is checked on every evaluation.
-- Resume: explicitly leave pause, then reconcile physical assumptions before allowing unattended cooling. Never clear unresolved delivery or commissioning faults as a side effect.
+- Resume: explicitly leave pause, then reconcile physical assumptions before allowing unattended cooling. Do not bypass fresh power reconciliation or physical direction inspection as a side effect.
 
 For a one-number temperature hold, propose preserving the configured restart-minus-target gap (for example, target 68°F with a 4°F gap restarts at 72°F). Freeze those effective settings when accepting the hold. The high-speed threshold also needs an explicit rule; propose inheriting the active preset's absolute threshold initially. These are proposed UX choices, not implemented behavior.
 
@@ -58,7 +58,7 @@ Add an additive SQLite control-state migration plus immutable command events (re
 
 **Concurrency matters:** delivery currently has its own file lock, but policy selection and external commands do not share one control lock. Add a consistent lock order and recheck effective intent before delivery. Pause must wait for an already-started guarded sequence to finish or block, then acknowledge quiescence; do not interrupt halfway through an endpoint sequence. An acknowledged pause must prevent stale scheduled work from subsequently sending. Do not report receipt as completed shutdown. Keep API acceptance, evaluation, packet acknowledgement, and physical power confirmation distinct.
 
-**Physical remote use:** the current commissioning contract explicitly excludes it. Watts cannot detect a changed airflow direction and cannot reliably distinguish every intermediate speed. Pausing permits manual use but must invalidate the commissioned model. First version can require physical intake confirmation/recommissioning before resume after manual use; ordinary holds within the controller need not invalidate commissioning. A phone button cannot establish unseen physical direction.
+**Physical remote use:** unattended control now overrides remote power/speed changes on the next evaluation when fresh settled power disagrees with the target. Matching low/high power bands skip transmission; overlapping intermediate-speed wattages may escape detection. It automatically reconciles incomplete power/endpoint deliveries using fresh settled power. Pause is still needed when manual settings should persist. Watts cannot detect a changed airflow direction; after a direction change, physically restore/inspect intake before resume. Ordinary power/speed use no longer requires recommissioning. A phone button cannot establish unseen physical direction.
 
 Acceptance: fake-clock expiry and restart persistence, schedule changes during holds, replacement/cancel behavior, paused commands, stale/malformed state, simultaneous controller/CLI requests, pause during delivery, and resume after manual changes without bypassing journal barriers.
 

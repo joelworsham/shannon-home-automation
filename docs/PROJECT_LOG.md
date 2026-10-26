@@ -284,3 +284,9 @@ Intermediate-speed measurements are historical experiments, not supported states
 - Endpoint consistency uses window median plus up to 1 W padding, capped at a third of the calibrated gap. This installation's effective bands become 21.5–27 W low and 28–33 W high, without changing local commissioning or standby/running thresholds. Speed is a power-band estimate, not physical verification; direction remains the commissioned intake assumption.
 - Existing scheduled invocations load this code automatically. No commissioning, relay, manual IR probe, or schedule change was performed for this update. Normal manual live delivery retains its verification barriers.
 - Validation: all 178 offline tests pass, including no transmissions for matching low/high states, power-on with matching restored speed, remote power/speed overrides, accepted overlapping wattages, missed and interrupted commands, concurrent recovery exclusion, and state changes during startup. Shell syntax and diff whitespace checks pass. No new physical behavior validation performed.
+
+### Forecast-aware automatic cooling start feature note (2026-10-26)
+
+- User requested a feature note for automatically calculating cooling start time from historical evidence and outside temperatures, including looking up forecast temperatures ahead of time. Added SCH-3 and its proposed behavior/acceptance criteria to [FEATURE_TRACKER.md](FEATURE_TRACKER.md), extending the earlier predictive target-time cooling idea.
+- Proposed inputs include current room/outdoor conditions, historical cooling performance, and the forecast outdoor temperature trajectory through a configured ready-by time. Record predictions versus outcomes, refresh estimates, and retain a fixed-schedule fallback when evidence is insufficient.
+- Documentation only; no predictive model, forecast collection, configuration changes, or scheduling changes implemented. Ready-by time and permitted preconditioning window remain undecided.

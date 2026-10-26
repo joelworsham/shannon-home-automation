@@ -8,6 +8,7 @@ Scoped 2026-10-21. Status describes repository implementation, not deployment or
 | --- | --- | --- | --- |
 | SCH-1 | Sleep and all-other-times temperature presets | Scoped | Sleep window selects sleep settings; every other time selects the fallback preset instead of implicitly requesting OFF. |
 | SCH-2 | Explain active settings | Scoped | CLI, history, and later app identify the active preset and effective target/restart/high threshold. |
+| SCH-3 | Automatically calculate cooling start time | Not implemented; feature note added 2026-10-26 | Use historical cooling evidence, current bedroom/outdoor temperatures, and forecast outdoor temperatures to calculate when to start cooling for a configured target temperature and ready-by time. |
 | CTL-1 | Timed temperature hold | Scoped | A request such as 68°F for one hour overrides presets until expiry, then uses the schedule active at that moment. |
 | CTL-2 | Timed OFF hold | Scoped | OFF for four hours suppresses cooling across schedule changes, then returns to the current schedule. |
 | CTL-3 | Indefinite automation pause | Scoped | Pause stops issuing fan commands until explicitly resumed; it does not itself turn the fan off. |
@@ -93,11 +94,24 @@ Build a debug APK and install on the user's phone through Android Studio or `adb
 
 Acceptance: actual phone install, pairing, each command round-trip, expiry shown from server state, stale/offline status, rejected resume, update installation, and status after closing/reopening the app. An APK is not considered delivered until built; phone behavior is not considered verified until tested on-device.
 
+## Future feature: predictive cooling start time (SCH-3)
+
+Calculate the start time automatically from a desired temperature and ready-by time, rather than relying only on a fixed evening start. Extend the predictive target-time cooling idea recorded in [PROJECT_LOG.md](PROJECT_LOG.md).
+
+- Learn cooling duration/rate from historical bedroom and outdoor temperatures, starting room temperature, fan endpoint/power evidence, and recorded experiment/HVAC conditions where available. Account for missing data and distinguish commanded state from observed running evidence.
+- Look up forecast outdoor temperatures ahead of time, covering the possible cooling window through the ready-by time. Use the expected temperature trajectory and indoor/outdoor advantage, alongside current readings and historical performance, to estimate the required lead time.
+- Refresh the forecast and recalculate as actual temperatures arrive. Report the proposed start time, expected target-arrival time, confidence, and whether the target appears achievable. Record forecast issue/retrieval times, predictions, actual start/arrival times, and prediction errors so performance can improve over successive nights.
+- Define an allowed earliest start and whether preconditioning may begin outside the existing schedule. Preserve outdoor-advantage checks, temperature hysteresis, holds/pause when implemented, and existing hardware guards. Use the fixed schedule as a fallback when history or forecasts are insufficient, stale, or unavailable.
+
+Acceptance when implemented: replay historical nights using only information available at each prediction time; handle warmer/colder forecasts, forecast changes or outages, sparse history, unattainable targets, timezone/DST boundaries, and earliest-start limits; compare predicted versus actual arrival times before enabling automatic scheduling.
+
+Status: feature note only. Target ready-by time, earliest permitted start, and model/confidence rules remain to be chosen; current scheduling is unchanged.
+
 ## Scope boundaries and decisions still needed
 
 - First two presets: sleep and fallback. User's existing sleep values remain untouched; daytime values need selection before live enablement.
 - Hold target hysteresis and high-speed inheritance above are proposals to confirm before shipping holds.
 - Pause versus OFF semantics above are the recommended distinct controls. Indefinite OFF can use an OFF hold without expiry later, if wanted.
 - Home Wi-Fi only versus away-from-home access determines transport setup; app/backend structure supports either.
-- Keep intake-only behavior. General schedule calendars, heating, exhaust, remote preset editing, charts, and predictive cooling remain out of this first extension.
+- Keep intake-only behavior. General schedule calendars, heating, exhaust, remote preset editing, charts, and predictive cooling (SCH-3 above) remain out of this first extension.
 - Recommended sequence: presets -> durable controls/local CLI -> private API/worker -> Android. Holds and concurrency/resume behavior are the largest backend change; the app should be a thin client once those are settled.

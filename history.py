@@ -40,21 +40,36 @@ def main():
         if args.decisions:
             print("DECISIONS (latest first, UTC):")
             try:
+                columns = {r[1] for r in conn.execute('PRAGMA table_info(control_decisions)')}
+                schedule_columns = ('active_block, automation_mode, high_at_f' if 'active_block' in columns
+                                    else 'NULL AS active_block, NULL AS automation_mode, NULL AS high_at_f')
                 rows = conn.execute("""
                     SELECT recorded_at_utc, bedroom_temp_f, outdoor_temp_f,
                            target_f, restart_f, previous_mode, previous_speed,
-                           desired_mode, desired_speed, reason, state_changed, command_sent
+                           desired_mode, desired_speed, reason, state_changed, command_sent,
+                           """ + schedule_columns + """
                     FROM control_decisions ORDER BY id DESC LIMIT ?
                 """, (args.decisions,)).fetchall()
                 for r in rows:
+                    temperatures = (f"target={r['target_f']}°F restart={r['restart_f']}°F" if r['target_f'] is not None
+                                    else 'no temperature target')
+                    schedule = ''
+                    if r['automation_mode']:
+                        schedule = f"block={r['active_block'] or '(gap)'} automation={r['automation_mode']}"
+                        if r['automation_mode'] == 'temperature':
+                            schedule += f" high={r['high_at_f'] if r['high_at_f'] is not None else 'disabled'}"
+                        schedule += ' | '
                     print(f"{r['recorded_at_utc']} | room={r['bedroom_temp_f']}°F "
-                          f"outside={r['outdoor_temp_f']}°F target={r['target_f']}°F "
-                          f"restart={r['restart_f']}°F | "
+                          f"outside={r['outdoor_temp_f']}°F {temperatures} | {schedule}"
                           f"{r['previous_mode']}/{r['previous_speed']} -> "
                           f"{r['desired_mode']}/{r['desired_speed']} | "
                           f"change={r['state_changed']} sent={r['command_sent']} | {r['reason']}")
             except sqlite3.OperationalError as exc:
                 parser.error(f"History schema not up to date. Run controller.py first. ({exc})")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='schedule_state'").fetchone():
+                state = conn.execute('SELECT phase,updated_at_utc FROM schedule_state WHERE id=1').fetchone()
+                if state:
+                    print(f'SCHEDULE CONTROL: {state[0]} (last transition {state[1]})')
         if args.configs:
             print("\nCONFIGURATION ACTIVATIONS (oldest first, UTC):")
             for row in conn.execute("""

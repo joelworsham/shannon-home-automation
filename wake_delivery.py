@@ -23,6 +23,9 @@ class WakeAwareDelivery:
         # Never restore an awake estimate across process restarts.
         self._awake_until = None
         self._generation = 0
+        # Optional schedule check, called under the delivery lock before the
+        # first packet of each logical sequence. Never interrupt an endpoint.
+        self.before_sequence = None
 
     def invalidate_display(self):
         """Call on manual/app activity or loss of exclusive control."""
@@ -59,10 +62,13 @@ class WakeAwareDelivery:
             return self._execute(desired, observe, run_id=run_id)
 
     def _execute(self, desired, observe, *, run_id=None):
+        if self.before_sequence:
+            self.before_sequence()
         observed, command = self._plan(desired, observe)
         expected = not observed.running if command == 'power_toggle' else None
         attempt = self.store.claim(command, expected, self.utcnow(), run_id=run_id)
         generation = self._generation
+        sequence_started = False
         try:
             self.store.event(attempt, 'planned', self.utcnow(), command=command,
                              display_estimate=self.display_estimate,
@@ -77,7 +83,10 @@ class WakeAwareDelivery:
                     raise DeliveryBlocked('State changed during quiet interval')
                 if generation != self._generation:
                     raise DeliveryBlocked('External activity invalidated display timing')
+                if self.before_sequence:
+                    self.before_sequence()
                 self._send(attempt, 'wake', 'speed_up')
+                sequence_started = True
                 self.sleep(self.settings.wake_delay_s)
             # Recheck evidence before the action; observing may consume time.
             fresh, fresh_command = self._plan(desired, observe)
@@ -86,6 +95,10 @@ class WakeAwareDelivery:
             if generation != self._generation or self.display_estimate != 'assumed_awake':
                 raise DeliveryBlocked('Awake window expired or was invalidated; no action')
             for index, button in enumerate(command_buttons(command)):
+                if index == 0 and not sequence_started and self.before_sequence:
+                    # After a wake, the sequence has already started and must
+                    # finish. Otherwise recheck after potentially slow reads.
+                    self.before_sequence()
                 if index:
                     self.sleep(self.settings.wake_delay_s)
                 if generation != self._generation or self.display_estimate != 'assumed_awake':

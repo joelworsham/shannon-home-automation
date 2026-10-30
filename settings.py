@@ -6,10 +6,12 @@ import os
 from math import isfinite
 from dataclasses import dataclass
 from datetime import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 from climate_policy import PolicyConfig
 from device_plan import PowerCalibration
+from schedules import load_blocks, ScheduleBlock
 
 
 @dataclass(frozen=True)
@@ -81,10 +83,16 @@ def load_delivery_settings() -> DeliverySettings:
 class ControllerSettings:
     policy: PolicyConfig
     weather_location: str
+    schedule_blocks: tuple[ScheduleBlock, ...] | None = None
 
     def as_public_dict(self) -> dict:
         """Safe to write to SQLite or Git: never contains Flair credentials."""
-        return {"climate": self.policy.as_dict(), "weather_location": self.weather_location}
+        climate = self.policy.as_dict()
+        if self.schedule_blocks is not None:
+            for key in ('target_f', 'restart_f', 'high_at_f', 'schedule_start', 'schedule_end'):
+                climate.pop(key)
+            climate['blocks'] = [b.as_dict() for b in self.schedule_blocks]
+        return {"climate": climate, "weather_location": self.weather_location}
 
 
 def _number(name: str, fallback: float) -> float:
@@ -120,17 +128,24 @@ def _clock(name: str, fallback: str) -> time:
 def load_settings() -> ControllerSettings:
     # Real environment variables override the .env file if present.
     load_dotenv(override=False)
+    schedule_file = os.getenv('CLIMATE_SCHEDULE_FILE', '').strip()
+    blocks = None
+    if schedule_file:
+        path = Path(schedule_file)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        blocks = load_blocks(path)
     policy = PolicyConfig(
-        target_f=_number("CLIMATE_TARGET_F", 60),
-        restart_f=_number("CLIMATE_RESTART_F", 64),
+        target_f=_number("CLIMATE_TARGET_F", 60) if blocks is None else 60,
+        restart_f=_number("CLIMATE_RESTART_F", 64) if blocks is None else 64,
         min_cooling_advantage_f=_number("CLIMATE_MIN_COOLING_ADVANTAGE_F", 5),
         speed_hysteresis_f=_number("CLIMATE_SPEED_HYSTERESIS_F", 0.5),
-        high_at_f=_optional_number("CLIMATE_HIGH_AT_F"),
-        schedule_start=_clock("CLIMATE_SCHEDULE_START", "22:00"),
-        schedule_end=_clock("CLIMATE_SCHEDULE_END", "07:30"),
+        high_at_f=_optional_number("CLIMATE_HIGH_AT_F") if blocks is None else None,
+        schedule_start=_clock("CLIMATE_SCHEDULE_START", "22:00") if blocks is None else time(22),
+        schedule_end=_clock("CLIMATE_SCHEDULE_END", "07:30") if blocks is None else time(7, 30),
         timezone=os.getenv("CLIMATE_TIMEZONE", "America/Indiana/Indianapolis").strip(),
     )
     location = os.getenv("WEATHER_LOCATION", "Indianapolis").strip()
     if not location:
         raise ValueError("WEATHER_LOCATION must not be blank")
-    return ControllerSettings(policy=policy, weather_location=location)
+    return ControllerSettings(policy=policy, weather_location=location, schedule_blocks=blocks)

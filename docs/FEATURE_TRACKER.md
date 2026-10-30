@@ -6,8 +6,8 @@ Scoped 2026-10-21. Status describes repository implementation, not deployment or
 
 | ID | Feature | Status | Done when |
 | --- | --- | --- | --- |
-| SCH-1 | Sleep and all-other-times temperature presets | Scoped | Sleep window selects sleep settings; every other time selects the fallback preset instead of implicitly requesting OFF. |
-| SCH-2 | Explain active settings | Scoped | CLI, history, and later app identify the active preset and effective target/restart/high threshold. |
+| SCH-1 | Named daily temperature blocks; inactive gaps | Implemented; offline validated | Any number of nonoverlapping daily blocks, including overnight. Adjacent blocks transition directly. Leaving a block for a gap performs guarded shutdown once, then permits manual operation without further commands. |
+| SCH-2 | Explain active settings | Implemented in CLI/history; app deferred | CLI and history identify the active block, effective target/restart/high threshold, pending shutdown, and inactive gaps. |
 | SCH-3 | Automatically calculate cooling start time | Not implemented; feature note added 2026-10-26 | Use historical cooling evidence, current bedroom/outdoor temperatures, and forecast outdoor temperatures to calculate when to start cooling for a configured target temperature and ready-by time. |
 | CTL-1 | Timed temperature hold | Scoped | A request such as 68°F for one hour overrides presets until expiry, then uses the schedule active at that moment. |
 | CTL-2 | Timed OFF hold | Scoped | OFF for four hours suppresses cooling across schedule changes, then returns to the current schedule. |
@@ -18,6 +18,12 @@ Scoped 2026-10-21. Status describes repository implementation, not deployment or
 | CFG-1 | Edit presets from phone | Deferred | Validate and persist settings on the Mac, with an audit trail; initial version continues using local config. |
 
 ## Architecture and implementation order
+
+### Design constraint: one home, one user
+
+Build for reliable, unattended personal use on this Mac and the owner's phone. This is a private home project with no other users and no planned publication. Prefer simple, explicit configuration, a small codebase, and existing components. Do not add multi-user accounts, tenancy, public distribution infrastructure, general-purpose scheduling frameworks, or extensibility layers without a concrete personal need.
+
+Prioritize correctness at schedule boundaries, safe manual operation, durable state where needed, restart recovery, useful diagnostics, and focused offline regression tests. Keep hardware guards and command coordination that prevent real failures. Choose the simplest implementation that meets those needs; avoid extra services, abstractions, dependencies, and operational maintenance for hypothetical future scale. The intended experience is set-and-forget operation with clear status when intervention is actually needed.
 
 Keep the Mac as the sole automation authority. The phone submits intent; it never talks to BroadLink, Shelly, or Flair directly.
 
@@ -31,21 +37,28 @@ clock + presets + control state -> effective intent -> climate policy
                                       SQLite decisions and delivery journal
 ```
 
-### 1. Presets: a small policy extension
+### 1. Daily time blocks
 
-Begin with one named sleep window and one named fallback, rather than a general calendar engine. Keep the existing window and temperature keys as the sleep preset. Add an explicitly enabled fallback preset with its own target, restart, and optional high threshold. Keep outdoor advantage and speed hysteresis shared initially. Missing fallback configuration preserves today's outside-window OFF behavior; enabling it must be deliberate because this checkout runs live every five minutes.
+The user replaced the initial sleep/fallback proposal with any number of named daily temperature blocks. Configure a JSON list through `CLIMATE_SCHEDULE_FILE`; each block has `name`, `start`, `end`, `target_f`, `restart_f`, and optional `high_at_f` (omitted/null means low-only). Outdoor advantage, speed hysteresis, and timezone remain shared. Reject duplicate names, overlaps (including across midnight), invalid temperatures, and malformed times before hardware work. Empty list means always inactive. Without a schedule file, legacy single-window behavior remains unchanged.
 
-Use half-open windows (start inclusive, end exclusive), the configured IANA timezone, and existing overnight behavior. Local wall-clock windows naturally repeat through a daylight-saving fold. Reject malformed configuration and invalid target/restart pairs before hardware work.
+Blocks repeat daily in the configured IANA timezone, with start inclusive and end exclusive. Overnight blocks are supported. Local wall-clock windows naturally repeat through a daylight-saving fold; a spring-forward skip is evaluated at the next available local time. Adjacent blocks select the new temperature settings without an intermediate shutdown. Weekday rules, calendar exceptions, priorities, and a schedule editor are out of scope.
 
-Schedule changes select new settings directly. Carry the previous desired fan state into the existing hysteresis logic: a running fan stops at the new target; an idle fan waits for the new restart threshold. Do not force an OFF cycle between presets. Log both the selected preset and effective thresholds, including outside-window fallback decisions; do not attribute fallback decisions to sleep temperatures in SQLite.
+**Block end → shutdown → inactive:** when an evaluated active block ends with no replacement block, request guarded OFF. Already OFF needs no transmission. Persist shutdown-pending state until fresh evidence confirms OFF; uncertain delivery is reconciled using the existing journal and calibrated power rather than blindly replaying a toggle. Sensor/API failure cannot prevent the shutdown. After confirmation, persist inactive mode and issue no further shutdown, wake, speed-correction, or recovery commands during the gap. The user may turn the fan on or adjust it manually and those settings persist. A first start in a gap with no previously active block leaves the fan alone. An interrupted shutdown stays pending across restarts; it is not advertised as inactive until confirmed. A new active block supersedes a pending shutdown.
 
-Acceptance: exact window boundaries, overnight/daytime windows, timezone/DST cases, both transition directions while running/off, optional high thresholds, invalid/partial fallback configuration, backward compatibility, simulation without writes, and effective-settings history.
+Keep inactive intent distinct from OFF and log no effective temperatures in a gap. Continue read-only monitoring/history where possible; monitoring failure is recorded as an error without rearming a completed shutdown. Dry runs and simulations never advance live schedule state. The existing five-minute scheduler handles transitions on its next evaluation, rather than promising exact-second changes.
+
+Use the existing delivery lock to serialize schedule selection, state transitions, physical observations, and commands. Recheck the block occurrence before each logical sequence and before its first packet after any quiet wait. An already-started guarded sequence finishes or blocks; no subsequent sequence starts under an expired block. When temperature control returns, use fresh physical power/endpoint evidence for hysteresis instead of the pre-gap desired state. Direction remains subject to the intake contract: after changing direction manually, restore/inspect intake before automation resumes.
+
+CLI/history show the selected block, effective target/restart/high threshold, and inactive/shutdown status. Additive SQLite migration preserves historical rows; inactive decisions do not claim a desired OFF state. Future indefinite pause must survive schedule boundaries and suppress even transition shutdown; it is not part of this feature implementation.
+
+Acceptance: boundaries, overnight/daytime blocks, adjacent transitions, midnight overlaps, timezone/DST behavior, invalid/empty configuration, legacy compatibility, one-time shutdown, already-OFF fan, uncertain/interrupted delivery, API outage at shutdown, manual changes persisting across repeated gap evaluations and restarts, fresh hysteresis on return, concurrency, no stale sends at boundaries, effective-settings history, and simulations without writes.
 
 ### 2. Holds and pause: a shared control-state layer
 
 Persist enabled/paused state separately from an optional active hold. Recommended first-version rules:
 
 - Normal: evaluate the active preset.
+- Schedule gap: after the required end-of-block shutdown, suppress all fan delivery, including temperature/OFF holds. Holds retain their absolute expiry; on leaving inactivity, only an unexpired hold can apply. Explicit pause remains independent, suppresses transition shutdown, and requires explicit resume; resume during an already inactive gap still sends no commands. These interactions remain future control-layer work.
 - Temperature hold: replace the active preset's temperatures; keep outdoor cooling protection and hardware guards. This is a cooling target, not guaranteed room temperature or heating.
 - OFF hold: request OFF regardless of preset. Unlike pause, this may send guarded power-off commands and needs no temperature API success to express its intent.
 - Pause: issue no hardware commands, including OFF. Continue status/history collection where possible. Pause takes precedence over a hold and cancels it, so resuming cannot unexpectedly restore an old hold.
@@ -59,7 +72,7 @@ Add an additive SQLite control-state migration plus immutable command events (re
 
 **Concurrency matters:** delivery currently has its own file lock, but policy selection and external commands do not share one control lock. Add a consistent lock order and recheck effective intent before delivery. Pause must wait for an already-started guarded sequence to finish or block, then acknowledge quiescence; do not interrupt halfway through an endpoint sequence. An acknowledged pause must prevent stale scheduled work from subsequently sending. Do not report receipt as completed shutdown. Keep API acceptance, evaluation, packet acknowledgement, and physical power confirmation distinct.
 
-**Physical remote use:** unattended control now overrides remote power/speed changes on the next evaluation when fresh settled power disagrees with the target. Matching low/high power bands skip transmission; overlapping intermediate-speed wattages may escape detection. It automatically reconciles incomplete power/endpoint deliveries using fresh settled power. Pause is still needed when manual settings should persist. Watts cannot detect a changed airflow direction; after a direction change, physically restore/inspect intake before resume. Ordinary power/speed use no longer requires recommissioning. A phone button cannot establish unseen physical direction.
+**Physical remote use:** current unattended control overrides remote power/speed changes on the next evaluation when fresh settled power disagrees with the target. Matching low/high power bands skip transmission; overlapping intermediate-speed wattages may escape detection. It automatically reconciles incomplete power/endpoint deliveries using fresh settled power. With the planned controls, pause or a scheduled inactive window allows manual settings to persist. Watts cannot detect a changed airflow direction; after a direction change, physically restore/inspect intake before resume. Ordinary power/speed use no longer requires recommissioning. A phone button cannot establish unseen physical direction.
 
 Acceptance: fake-clock expiry and restart persistence, schedule changes during holds, replacement/cancel behavior, paused commands, stale/malformed state, simultaneous controller/CLI requests, pause during delivery, and resume after manual changes without bypassing journal barriers.
 
@@ -109,7 +122,7 @@ Status: feature note only. Target ready-by time, earliest permitted start, and m
 
 ## Scope boundaries and decisions still needed
 
-- First two presets: sleep and fallback. User's existing sleep values remain untouched; daytime values need selection before live enablement.
+- Daily temperature blocks and inactive gaps supersede the original sleep/fallback and explicit inactive-window proposals. Preserve the existing sleep window and temperatures when migrating; add other blocks only when requested. User clarified that leaving a block for a gap must shut down once before allowing manual operation.
 - Hold target hysteresis and high-speed inheritance above are proposals to confirm before shipping holds.
 - Pause versus OFF semantics above are the recommended distinct controls. Indefinite OFF can use an OFF hold without expiry later, if wanted.
 - Home Wi-Fi only versus away-from-home access determines transport setup; app/backend structure supports either.

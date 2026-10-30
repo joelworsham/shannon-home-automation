@@ -226,13 +226,17 @@ class UnattendedRuntime(HardwareRuntime):
                 'Requested endpoint reasserted with settled power agreement', run_id, attempt)
 
 
-def run_unattended(desired, delivery_settings, *, run_id):
+def build_unattended_runtime(delivery_settings, *, run_id):
     if os.getenv('UNATTENDED_CONTROL_ENABLED', 'false').strip().lower() != 'true':
         raise PermissionError('Set UNATTENDED_CONTROL_ENABLED=true explicitly before unattended control')
     config = load_commissioning()
     base = build_runtime(delivery_settings, run_id=run_id)
     observer = CommissionedObserver(base.observer, config)
-    runtime = UnattendedRuntime(base.delivery, observer, base.power_settings)
+    return UnattendedRuntime(base.delivery, observer, base.power_settings)
+
+
+def run_unattended(desired, delivery_settings, *, run_id):
+    runtime = build_unattended_runtime(delivery_settings, run_id=run_id)
     return runtime.tick(desired, run_id=run_id, exclusive_control=True)
 
 

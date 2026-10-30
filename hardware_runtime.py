@@ -33,6 +33,10 @@ class HardwareRuntime:
     def tick(self, desired, *, run_id=None, exclusive_control=False):
         if not self.delivery.settings.enabled or not exclusive_control:
             raise PermissionError('Live control requires enabled delivery and exclusive control')
+        with self.delivery.store.guard():
+            return self._tick(desired, run_id=run_id)
+
+    def _tick(self, desired, *, run_id):
         pending = self.delivery.store.current()
         if pending:
             at = self.delivery.store.action_time(pending[0])
@@ -46,7 +50,7 @@ class HardwareRuntime:
             attempt, command = pending
             if command == 'power_toggle':
                 try:
-                    self.delivery.confirm_power(attempt, observed)
+                    self.delivery._confirm_power(attempt, observed)
                     return self._record(desired, observed, 'power_confirmed',
                         'Earlier power action confirmed; no new action this run', run_id, attempt)
                 except DeliveryBlocked:
@@ -58,8 +62,7 @@ class HardwareRuntime:
         if decision.status != 'ready':
             return self._record(desired, observed, decision.status, decision.reason, run_id)
         try:
-            attempt = self.delivery.execute(desired, self.observer,
-                                            exclusive_control=True, run_id=run_id)
+            attempt = self.delivery._execute(desired, self.observer, run_id=run_id)
         except DeliveryBlocked as exc:
             # Controlled blocking messages contain no host or credentials.
             return self._record(desired, observed, 'blocked', str(exc), run_id)
@@ -70,7 +73,7 @@ class HardwareRuntime:
         observed = self.observer()
         if command == 'power_toggle':
             try:
-                self.delivery.confirm_power(attempt, observed)
+                self.delivery._confirm_power(attempt, observed)
                 return self._record(desired, observed, 'power_confirmed',
                     'Settled power evidence confirms the action', run_id, attempt)
             except DeliveryBlocked:

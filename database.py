@@ -46,6 +46,10 @@ def connect():
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
+    conn.execute('''CREATE TABLE IF NOT EXISTS schedule_state (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        phase TEXT NOT NULL CHECK(phase IN ('active','shutdown_pending','inactive')),
+        updated_at_utc TEXT NOT NULL)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS delivery_attempts (
         id TEXT PRIMARY KEY, command TEXT NOT NULL, expected_running INTEGER,
         started_at_utc TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0)''')
@@ -128,6 +132,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "min_cooling_advantage_f": "REAL",
             "policy_config_json": "TEXT",
             "decision_context_json": "TEXT",
+            "active_block": "TEXT",
+            "automation_mode": "TEXT",
+            "high_at_f": "REAL",
         },
     }.items():
         for col, definition in extra.items():
@@ -210,8 +217,9 @@ def _diff(old: dict, new: dict) -> dict:
                 "weather_location": old.get("weather_location")}
     new_flat = {**{f"climate.{k}": v for k, v in new_policy.items()},
                 "weather_location": new.get("weather_location")}
-    return {key: {"old": old_flat.get(key), "new": value}
-            for key, value in new_flat.items() if old_flat.get(key) != value}
+    return {key: {"old": old_flat.get(key), "new": new_flat.get(key)}
+            for key in sorted(old_flat.keys() | new_flat.keys())
+            if old_flat.get(key) != new_flat.get(key)}
 
 
 def activate_config(run_id: int, settings: ControllerSettings) -> int:
@@ -289,7 +297,7 @@ def last_desired_state(*, readonly: bool = False) -> FanState:
                 SELECT desired_mode, desired_speed FROM control_decisions
                 ORDER BY id DESC LIMIT 1
             """).fetchone()
-    return FanState(row[0], row[1]) if row else FanState()
+    return FanState(row[0], row[1]) if row and row[0] != 'inactive' else FanState()
 
 
 def save_evaluation(
@@ -297,7 +305,11 @@ def save_evaluation(
     previous: FanState, decision: Decision, settings: ControllerSettings, live: bool = False,
 ) -> None:
     """Append policy evidence; live runs stay pending until hardware evaluation."""
-    policy = settings.policy
+    policy = decision.effective_policy or settings.policy
+    desired_mode = decision.desired.mode if decision.desired else 'inactive'
+    desired_speed = decision.desired.speed if decision.desired else 0
+    state_changed = decision.desired is not None and decision.desired != previous
+    has_temperatures = decision.automation_mode == 'temperature'
     values = settings.as_public_dict()
     with connect() as conn, conn:
         now = _utc()
@@ -313,13 +325,18 @@ def save_evaluation(
         context = {
             "bedroom": bedroom,
             "outdoor": outdoor,
-            "previous_desired": {"mode": previous.mode, "speed": previous.speed},
-            "desired": {"mode": decision.desired.mode, "speed": decision.desired.speed},
+            "previous_desired": {"mode": previous.mode, "speed": previous.speed} if decision.previous_basis == 'previous_desired' else None,
+            "policy_previous": {"mode": previous.mode, "speed": previous.speed},
+            "previous_state_basis": decision.previous_basis,
+            "desired": {"mode": desired_mode, "speed": desired_speed},
+            "active_block": decision.active_block,
+            "automation_mode": decision.automation_mode,
+            "effective_settings": policy.as_dict() if has_temperatures else None,
             "cooling_advantage_f": bedroom["temp"] - outdoor["temp"],
             "scheduled": decision.scheduled,
             "reason_code": decision.reason_code,
             "reason": decision.reason,
-            "state_changed": decision.desired != previous,
+            "state_changed": state_changed,
             "hardware_commands_sent": None if live else False,
             "hardware_mode": "live_pending" if live else "dry_run",
         }
@@ -329,14 +346,17 @@ def save_evaluation(
                  previous_mode,previous_speed,desired_mode,desired_speed,
                  reason,command_sent,run_id,config_snapshot_id,reason_code,
                  state_changed,cooling_advantage_f,target_f,restart_f,
-                 min_cooling_advantage_f,policy_config_json,decision_context_json)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 min_cooling_advantage_f,policy_config_json,decision_context_json,
+                 active_block,automation_mode,high_at_f)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (now, bedroom["temp"], outdoor["temp"], int(decision.scheduled),
-              previous.mode, previous.speed, decision.desired.mode, decision.desired.speed,
+              previous.mode, previous.speed, desired_mode, desired_speed,
               decision.reason, -1 if live else 0, run_id, config_snapshot_id, decision.reason_code,
-              int(decision.desired != previous), bedroom["temp"] - outdoor["temp"],
-              policy.target_f, policy.restart_f, policy.min_cooling_advantage_f,
-              _json(values), _json(context)))
+              int(state_changed), bedroom["temp"] - outdoor["temp"],
+              policy.target_f if has_temperatures else None, policy.restart_f if has_temperatures else None,
+              policy.min_cooling_advantage_f if has_temperatures else None,
+              _json(values), _json(context), decision.active_block, decision.automation_mode,
+              policy.high_at_f if has_temperatures else None))
         # The policy evaluation alone provides no physical state. Live hardware
         # observations are appended separately by the guarded runtime.
         conn.execute("""
@@ -344,8 +364,8 @@ def save_evaluation(
                 recorded_at_utc,run_id,source,desired_mode,desired_speed,
                 reconciliation_status,note
             ) VALUES (?,?,?,?,?,?,?)
-        """, (now, run_id, "live_control" if live else "live_dry_run", decision.desired.mode,
-              decision.desired.speed, "physical_state_unverified",
+        """, (now, run_id, "live_control" if live else "live_dry_run", desired_mode,
+              desired_speed, "physical_state_unverified",
               "Awaiting guarded hardware evaluation" if live else
               "Dry-run decision only; no IR commands or wattage observation"))
         conn.execute("""
@@ -396,7 +416,7 @@ def finish_hardware_run(run_id: int, outcome: dict, *, failed=False):
                          (sent, _json(context), row_id))
         if not failed:
             conn.execute('UPDATE controller_runs SET status=?,stage=?,finished_at_utc=? WHERE id=?',
-                ('success' if outcome['status'] in ('satisfied', 'power_confirmed', 'endpoint_consistent') else 'blocked',
+                ('success' if outcome['status'] in ('satisfied', 'power_confirmed', 'endpoint_consistent', 'inactive') else 'blocked',
                  'hardware_' + outcome['status'], _utc(), run_id))
 
 

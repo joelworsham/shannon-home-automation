@@ -65,10 +65,14 @@ class FanState:
 
 @dataclass(frozen=True)
 class Decision:
-    desired: FanState
+    desired: FanState | None
     reason: str
     scheduled: bool
     reason_code: str = "unspecified"
+    active_block: str | None = None
+    automation_mode: str = 'temperature'
+    effective_policy: PolicyConfig | None = None
+    previous_basis: str = 'previous_desired'
 
 
 def schedule_active(when: datetime, config: PolicyConfig = PolicyConfig()) -> bool:

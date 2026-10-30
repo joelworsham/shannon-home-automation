@@ -8,6 +8,39 @@ dry-run, even when the hardware environment setting is enabled.
 The Flair Smart Vent remains independent. Every normal controller run stores a
 detailed audit trail in local SQLite.
 
+## Daily time blocks and manual operation between blocks
+
+Set `CLIMATE_SCHEDULE_FILE=data/schedule.json` in `.env` to use a list of named
+daily temperature blocks. Copy [the example](config/schedule.example.json) and
+edit the blocks for your home. Paths are relative to this project directory.
+Each block requires a unique name, local `HH:MM` start/end, `target_f`, and
+`restart_f`; optional `high_at_f` selects high speed (omit it for low-only).
+Set `high_at_f` at/below the target for high-only cooling. Outdoor advantage,
+speed hysteresis, and `CLIMATE_TIMEZONE` remain shared settings.
+
+Overnight blocks work; overlaps and equal start/end times are rejected.
+Start times are inclusive and end times exclusive. Adjacent blocks transition
+directly to the next temperatures. A gap triggers one guarded shutdown after
+the previous block ends. Once OFF is confirmed, automation becomes **inactive**:
+you can operate the fan manually without subsequent evaluations changing it.
+Shutdown-pending state survives restarts and sensor API outages; uncertainty
+uses fresh power reconciliation rather than a blindly repeated power toggle.
+If shutdown cannot be confirmed, history shows it as pending/blocked.
+
+A first start in a gap leaves the fan alone. An empty list `[]` means always
+inactive, after finishing shutdown if automation previously had an active block.
+At the next block, fresh power evidence determines whether the fan is running;
+automation resumes under the existing intake-direction contract. If you change
+direction manually, restore and inspect intake before the next block.
+
+Transitions occur on the existing scheduled evaluation (normally every five
+minutes). A guarded sequence already underway finishes or blocks; new sequences
+recheck the schedule before sending. CLI and `history.py` show the active block,
+effective temperatures, pending shutdown, and inactive state. Dry runs do not
+consume live transitions; `--at` also leaves SQLite unchanged. With the schedule
+file setting blank, the legacy single-window settings and outside-window OFF
+behavior remain unchanged. This feature adds no service or dependency.
+
 ## Wake-aware delivery foundation
 
 Supervised October 20 diagnostics established display wake followed by a

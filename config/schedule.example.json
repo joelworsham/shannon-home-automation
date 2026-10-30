@@ -1,0 +1,17 @@
+[
+  {
+    "name": "sleep",
+    "start": "20:30",
+    "end": "07:30",
+    "target_f": 60,
+    "restart_f": 62,
+    "high_at_f": 60
+  },
+  {
+    "name": "afternoon",
+    "start": "15:00",
+    "end": "17:00",
+    "target_f": 68,
+    "restart_f": 72
+  }
+]

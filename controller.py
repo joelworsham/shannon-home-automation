@@ -23,11 +23,18 @@ def _print_result(now, bedroom, outdoor, previous, decision, config, saved: bool
           "=== Bedroom climate controller (DRY RUN — no IR commands) ===")
     print(f"Local time: {now:%Y-%m-%d %H:%M} ({config.policy.timezone})")
     print(f"Bedroom: {bedroom['temp']:.1f}°F; outside: {outdoor['temp']:.1f}°F")
-    print(f"Settings: target={config.policy.target_f:g}°F, restart={config.policy.restart_f:g}°F, "
-          f"outdoor advantage={config.policy.min_cooling_advantage_f:g}°F")
+    effective = decision.effective_policy or config.policy
+    if config.schedule_blocks is not None:
+        print(f"Schedule: {decision.active_block or '(gap)'}; automation={decision.automation_mode}")
+    if decision.automation_mode == 'temperature':
+        print(f"Settings: target={effective.target_f:g}°F, restart={effective.restart_f:g}°F, "
+              f"high={effective.high_at_f if effective.high_at_f is not None else 'disabled'}, "
+              f"outdoor advantage={effective.min_cooling_advantage_f:g}°F")
     speed_names = {0: 'off', 1: 'low', 4: 'high'}
-    print(f"Previous desired: {previous.mode} (speed {speed_names[previous.speed]})")
-    print(f"Desired: {decision.desired.mode} (speed {speed_names[decision.desired.speed]})")
+    previous_label = 'Current fan estimate used by policy' if decision.previous_basis != 'previous_desired' else 'Previous desired'
+    print(f"{previous_label}: {previous.mode} (speed {speed_names[previous.speed]})")
+    print(f"Desired: {decision.desired.mode} (speed {speed_names[decision.desired.speed]})" if decision.desired
+          else 'Desired: no fan commands (automation inactive)')
     print(f"Decision: {decision.reason_code} — {decision.reason}")
     print("SQLite: run, reading, config and decision saved" if saved
           else "SQLite: unchanged (simulation)")
@@ -79,9 +86,13 @@ def main() -> None:
         previous = (FanState() if args.previous == "off" else
                     FanState("intake", 1 if args.previous == "intake-low" else 4) if args.previous else
                     last_desired_state(readonly=True))
-        decision = evaluate(when=now, bedroom_f=bedroom["temp"],
-                            outdoor_f=outdoor["temp"], previous=previous,
-                            config=config.policy)
+        if config.schedule_blocks is not None:
+            from scheduled_control import simulate
+            decision = simulate(now, config, bedroom, outdoor, previous)
+        else:
+            decision = evaluate(when=now, bedroom_f=bedroom["temp"],
+                                outdoor_f=outdoor["temp"], previous=previous,
+                                config=config.policy)
         _print_result(now, bedroom, outdoor, previous, decision, config, False)
         return
 
@@ -91,6 +102,14 @@ def main() -> None:
     try:
         config = load_settings()
         snapshot_id = activate_config(run_id, config)
+        if config.schedule_blocks is not None:
+            from scheduled_control import run
+            stage = 'scheduled_control'
+            now, bedroom, outdoor, previous, decision, hardware = run(
+                args, config, delivery_settings, run_id, snapshot_id, get_bedroom, get_outdoor)
+            _print_result(now.astimezone(ZoneInfo(config.policy.timezone)), bedroom, outdoor,
+                          previous, decision, config, True, hardware)
+            return
         stage = "fetch_bedroom"
         update_stage(run_id, stage)
         bedroom = get_bedroom()
